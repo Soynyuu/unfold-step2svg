@@ -126,16 +126,16 @@ class GeometryAnalyzer:
                     axis = plane.Axis()
                     normal_dir = axis.Direction()
                     normal_vec = [normal_dir.X(), normal_dir.Y(), normal_dir.Z()]
-                    print(f"面{face_index} の法線ベクトル: {normal_vec}")
                 except:
                     pass
             
-            # 立方体の面番号を法線ベクトルから決定
-            face_number = self._determine_cube_face_number(normal_vec, [centroid.X(), centroid.Y(), centroid.Z()]) if normal_vec else face_index + 1
+            # 各面にユニークな番号を割り当てる（単純にインデックス+1を使用）
+            # 法線ベクトルは記録するが、番号決定には使わない
+            face_number = face_index + 1  # 1から開始するユニークな面番号
             
             face_data = {
                 "index": face_index,
-                "face_number": face_number,  # 幾何学的位置に基づく面番号
+                "face_number": face_number,  # ユニークな面番号
                 "area": area,
                 "centroid": [centroid.X(), centroid.Y(), centroid.Z()],
                 "surface_type": self._get_surface_type_name(surface_type_enum),
@@ -229,50 +229,13 @@ class GeometryAnalyzer:
         }
         return type_map.get(surface_type_enum, "other")
     
-    def _determine_cube_face_number(self, normal_vec, centroid):
-        """
-        立方体の面番号を法線ベクトルの方向から決定。
-        chili3dの面番号と一致させる：
-        1: 前面（+Z）
-        2: 背面（-Z）
-        3: 右面（+X）
-        4: 左面（-X）
-        5: 上面（+Y）
-        6: 下面（-Y）
-        """
-        if not normal_vec:
-            return 1  # デフォルト値
-        
-        # 法線ベクトルの主成分を判定
-        abs_x = abs(normal_vec[0])
-        abs_y = abs(normal_vec[1])
-        abs_z = abs(normal_vec[2])
-        
-        # 最も大きい成分の軸が法線の向きを決定
-        if abs_z >= abs_x and abs_z >= abs_y:
-            # Z軸方向
-            if normal_vec[2] > 0:
-                print(f"  -> 前面（+Z）として面番号1を割り当て")
-                return 1  # 前面（+Z）
-            else:
-                print(f"  -> 背面（-Z）として面番号2を割り当て")
-                return 2  # 背面（-Z）
-        elif abs_x >= abs_y and abs_x >= abs_z:
-            # X軸方向
-            if normal_vec[0] > 0:
-                print(f"  -> 右面（+X）として面番号3を割り当て")
-                return 3  # 右面（+X）
-            else:
-                print(f"  -> 左面（-X）として面番号4を割り当て")
-                return 4  # 左面（-X）
-        else:
-            # Y軸方向
-            if normal_vec[1] > 0:
-                print(f"  -> 上面（+Y）として面番号5を割り当て")
-                return 5  # 上面（+Y）
-            else:
-                print(f"  -> 下面（-Y）として面番号6を割り当て")
-                return 6  # 下面（-Y）
+    # 以下のメソッドは現在使用していないが、将来の参考のために残す
+    # def _determine_cube_face_number(self, normal_vec, centroid):
+    #     """
+    #     立方体の面番号を法線ベクトルの方向から決定。
+    #     注意: 現在は各面にユニークな番号を割り当てるため使用していない
+    #     """
+    #     pass
 
     def _extract_face_boundaries(self, face):
         """
