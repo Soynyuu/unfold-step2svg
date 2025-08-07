@@ -28,6 +28,16 @@ class GeometryAnalyzer:
     def __init__(self):
         self.faces_data: List[Dict] = []
         self.edges_data: List[Dict] = []
+        # 各方向の面のカウンター（ユニークな番号を割り当てるため）
+        self.face_direction_counters = {
+            'pos_z': 0,  # +Z方向
+            'neg_z': 0,  # -Z方向
+            'pos_x': 0,  # +X方向
+            'neg_x': 0,  # -X方向
+            'pos_y': 0,  # +Y方向
+            'neg_y': 0,  # -Y方向
+            'other': 0   # その他
+        }
         self.stats = {
             "total_faces": 0,
             "planar_faces": 0,
@@ -129,9 +139,8 @@ class GeometryAnalyzer:
                 except:
                     pass
             
-            # 各面にユニークな番号を割り当てる（単純にインデックス+1を使用）
-            # 法線ベクトルは記録するが、番号決定には使わない
-            face_number = face_index + 1  # 1から開始するユニークな面番号
+            # 法線ベクトルに基づいて面番号を割り当てる
+            face_number = self._assign_face_number_by_normal(normal_vec, [centroid.X(), centroid.Y(), centroid.Z()])
             
             face_data = {
                 "index": face_index,
@@ -229,13 +238,73 @@ class GeometryAnalyzer:
         }
         return type_map.get(surface_type_enum, "other")
     
-    # 以下のメソッドは現在使用していないが、将来の参考のために残す
-    # def _determine_cube_face_number(self, normal_vec, centroid):
-    #     """
-    #     立方体の面番号を法線ベクトルの方向から決定。
-    #     注意: 現在は各面にユニークな番号を割り当てるため使用していない
-    #     """
-    #     pass
+    def _assign_face_number_by_normal(self, normal_vec, centroid):
+        """
+        法線ベクトルの方向に基づいて面番号を割り当てる。
+        同じ方向の面が複数ある場合は、連番でユニークな番号を割り当てる。
+        
+        番号体系:
+        1, 11, 21... : +Z方向の面
+        2, 12, 22... : -Z方向の面
+        3, 13, 23... : +X方向の面
+        4, 14, 24... : -X方向の面
+        5, 15, 25... : +Y方向の面
+        6, 16, 26... : -Y方向の面
+        7, 17, 27... : その他の面
+        """
+        if not normal_vec:
+            # 法線ベクトルが取得できない場合
+            self.face_direction_counters['other'] += 1
+            return 7 + (self.face_direction_counters['other'] - 1) * 10
+        
+        # 法線ベクトルの主成分を判定
+        abs_x = abs(normal_vec[0])
+        abs_y = abs(normal_vec[1])
+        abs_z = abs(normal_vec[2])
+        
+        # 最も大きい成分の軸が法線の向きを決定
+        if abs_z >= abs_x and abs_z >= abs_y:
+            # Z軸方向
+            if normal_vec[2] > 0:
+                # +Z方向
+                self.face_direction_counters['pos_z'] += 1
+                face_number = 1 + (self.face_direction_counters['pos_z'] - 1) * 10
+                print(f"  -> +Z方向の面として面番号{face_number}を割り当て")
+                return face_number
+            else:
+                # -Z方向
+                self.face_direction_counters['neg_z'] += 1
+                face_number = 2 + (self.face_direction_counters['neg_z'] - 1) * 10
+                print(f"  -> -Z方向の面として面番号{face_number}を割り当て")
+                return face_number
+        elif abs_x >= abs_y and abs_x >= abs_z:
+            # X軸方向
+            if normal_vec[0] > 0:
+                # +X方向
+                self.face_direction_counters['pos_x'] += 1
+                face_number = 3 + (self.face_direction_counters['pos_x'] - 1) * 10
+                print(f"  -> +X方向の面として面番号{face_number}を割り当て")
+                return face_number
+            else:
+                # -X方向
+                self.face_direction_counters['neg_x'] += 1
+                face_number = 4 + (self.face_direction_counters['neg_x'] - 1) * 10
+                print(f"  -> -X方向の面として面番号{face_number}を割り当て")
+                return face_number
+        else:
+            # Y軸方向
+            if normal_vec[1] > 0:
+                # +Y方向
+                self.face_direction_counters['pos_y'] += 1
+                face_number = 5 + (self.face_direction_counters['pos_y'] - 1) * 10
+                print(f"  -> +Y方向の面として面番号{face_number}を割り当て")
+                return face_number
+            else:
+                # -Y方向
+                self.face_direction_counters['neg_y'] += 1
+                face_number = 6 + (self.face_direction_counters['neg_y'] - 1) * 10
+                print(f"  -> -Y方向の面として面番号{face_number}を割り当て")
+                return face_number
 
     def _extract_face_boundaries(self, face):
         """
