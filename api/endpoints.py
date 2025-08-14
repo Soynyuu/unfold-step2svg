@@ -17,20 +17,22 @@ router = APIRouter()
 @router.post("/api/step/unfold")
 async def unfold_step_to_svg(
     file: UploadFile = File(...),
-    return_face_numbers: bool = Form(True)
+    return_face_numbers: bool = Form(True),
+    output_format: str = Form("svg")
 ):
     """
     STEPファイル（.step/.stp）を受け取り、展開図（SVG）を生成するAPI。
-    出力: SVGコンテンツと面番号データを含むJSONレスポンス
     
     Args:
         file: STEPファイル (.step/.stp)
         return_face_numbers: 面番号データを含むかどうか (default: True)
+        output_format: 出力形式 - "svg"=SVGファイル（デフォルト）、"json"=JSONレスポンス
     
     Returns:
-        JSON: {
+        - output_format="svg": SVGファイル（従来形式、後方互換性）
+        - output_format="json": JSON: {
             "svg_content": "SVG文字列",
-            "face_numbers": [{"faceIndex": 0, "faceNumber": 1}, ...], // return_face_numbers=True時のみ
+            "face_numbers": [{"faceIndex": 0, "faceNumber": 1}, ...],
             "stats": {...}
         }
     """
@@ -55,30 +57,40 @@ async def unfold_step_to_svg(
         request = BrepPapercraftRequest()
         svg_path, stats = step_unfold_generator.generate_brep_papercraft(request, output_path)
         
-        # SVGファイルの内容を読み込み
-        with open(svg_path, 'r', encoding='utf-8') as svg_file:
-            svg_content = svg_file.read()
-        
-        # レスポンスデータを作成
-        response_data = {
-            "svg_content": svg_content,
-            "stats": stats
-        }
-        
-        # 面番号データを含める場合
-        if return_face_numbers:
-            # StepUnfoldGeneratorから面番号データを取得
-            face_numbers = step_unfold_generator.get_face_numbers()
-            response_data["face_numbers"] = face_numbers
-            print(f"API Response: 面番号データ {len(face_numbers)}個を含むレスポンスを返します")
-        
-        # 一時ファイルをクリーンアップ
-        try:
-            os.unlink(svg_path)
-        except:
-            pass
-        
-        return response_data
+        # 出力形式に応じてレスポンスを分岐
+        if output_format.lower() == "json":
+            # JSONレスポンス形式（新形式）
+            # SVGファイルの内容を読み込み
+            with open(svg_path, 'r', encoding='utf-8') as svg_file:
+                svg_content = svg_file.read()
+            
+            # レスポンスデータを作成
+            response_data = {
+                "svg_content": svg_content,
+                "stats": stats
+            }
+            
+            # 面番号データを含める場合
+            if return_face_numbers:
+                # StepUnfoldGeneratorから面番号データを取得
+                face_numbers = step_unfold_generator.get_face_numbers()
+                response_data["face_numbers"] = face_numbers
+                print(f"API Response: 面番号データ {len(face_numbers)}個を含むJSONレスポンスを返します")
+            
+            # 一時ファイルをクリーンアップ
+            try:
+                os.unlink(svg_path)
+            except:
+                pass
+            
+            return response_data
+        else:
+            # SVGファイルレスポンス（従来形式、後方互換性）
+            return FileResponse(
+                path=svg_path,
+                media_type="image/svg+xml",
+                filename=f"step_unfold_{uuid.uuid4()}.svg"
+            )
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
