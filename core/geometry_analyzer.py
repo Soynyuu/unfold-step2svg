@@ -46,6 +46,21 @@ class GeometryAnalyzer:
             "other_faces": 0,
         }
     
+    def reset_face_numbering(self):
+        """
+        面番号カウンターをリセットする。新しい形状の解析を開始する前に呼び出す。
+        """
+        self.face_direction_counters = {
+            'pos_z': 0,  # +Z方向
+            'neg_z': 0,  # -Z方向
+            'pos_x': 0,  # +X方向
+            'neg_x': 0,  # -X方向
+            'pos_y': 0,  # +Y方向
+            'neg_y': 0,  # -Y方向
+            'other': 0   # その他
+        }
+        print("面番号カウンターをリセットしました")
+    
     def analyze_brep_topology(self, solid_shape):
         """
         BREPソリッドのトポロジ構造を詳細解析。
@@ -57,6 +72,7 @@ class GeometryAnalyzer:
         print("BREPトポロジ解析開始...")
         self.faces_data.clear()
         self.edges_data.clear()
+        self.reset_face_numbering()  # 面番号カウンターをリセット
         
         try:
             # --- 面（Face）の解析 ---
@@ -243,68 +259,95 @@ class GeometryAnalyzer:
         法線ベクトルの方向に基づいて面番号を割り当てる。
         同じ方向の面が複数ある場合は、連番でユニークな番号を割り当てる。
         
-        番号体系:
-        1, 11, 21... : +Z方向の面
-        2, 12, 22... : -Z方向の面
-        3, 13, 23... : +X方向の面
-        4, 14, 24... : -X方向の面
-        5, 15, 25... : +Y方向の面
-        6, 16, 26... : -Y方向の面
+        番号体系（フロントエンドと統一）:
+        1, 11, 21... : +Z方向の面（前面）
+        2, 12, 22... : -Z方向の面（背面）
+        3, 13, 23... : +X方向の面（右面）
+        4, 14, 24... : -X方向の面（左面）
+        5, 15, 25... : +Y方向の面（上面）
+        6, 16, 26... : -Y方向の面（下面）
         7, 17, 27... : その他の面
         """
         if not normal_vec:
             # 法線ベクトルが取得できない場合
             self.face_direction_counters['other'] += 1
-            return 7 + (self.face_direction_counters['other'] - 1) * 10
+            face_number = 7 + (self.face_direction_counters['other'] - 1) * 10
+            print(f"  -> 法線不明として面番号{face_number}を割り当て")
+            return face_number
         
-        # 法線ベクトルの主成分を判定
-        abs_x = abs(normal_vec[0])
-        abs_y = abs(normal_vec[1])
-        abs_z = abs(normal_vec[2])
+        # 法線ベクトルの正規化
+        normal_magnitude = math.sqrt(normal_vec[0]**2 + normal_vec[1]**2 + normal_vec[2]**2)
+        if normal_magnitude < 1e-8:
+            # 法線がゼロベクトルの場合
+            self.face_direction_counters['other'] += 1
+            face_number = 7 + (self.face_direction_counters['other'] - 1) * 10
+            print(f"  -> ゼロ法線として面番号{face_number}を割り当て")
+            return face_number
         
-        # 最も大きい成分の軸が法線の向きを決定
-        if abs_z >= abs_x and abs_z >= abs_y:
-            # Z軸方向
-            if normal_vec[2] > 0:
-                # +Z方向
+        # 正規化された法線ベクトル
+        normalized_normal = [normal_vec[0]/normal_magnitude, 
+                           normal_vec[1]/normal_magnitude, 
+                           normal_vec[2]/normal_magnitude]
+        
+        # 法線ベクトルの主成分を判定（より高い閾値で確実に判定）
+        abs_x = abs(normalized_normal[0])
+        abs_y = abs(normalized_normal[1])
+        abs_z = abs(normalized_normal[2])
+        threshold = 0.7  # 主成分を判定する閾値
+        
+        print(f"  -> 法線ベクトル: ({normalized_normal[0]:.3f}, {normalized_normal[1]:.3f}, {normalized_normal[2]:.3f})")
+        print(f"  -> 成分: |X|={abs_x:.3f}, |Y|={abs_y:.3f}, |Z|={abs_z:.3f}")
+        
+        # Z軸方向の判定
+        if abs_z >= threshold and abs_z >= abs_x and abs_z >= abs_y:
+            if normalized_normal[2] > 0:
+                # +Z方向（前面）
                 self.face_direction_counters['pos_z'] += 1
                 face_number = 1 + (self.face_direction_counters['pos_z'] - 1) * 10
-                print(f"  -> +Z方向の面として面番号{face_number}を割り当て")
+                print(f"  -> +Z方向（前面）として面番号{face_number}を割り当て")
                 return face_number
             else:
-                # -Z方向
+                # -Z方向（背面）
                 self.face_direction_counters['neg_z'] += 1
                 face_number = 2 + (self.face_direction_counters['neg_z'] - 1) * 10
-                print(f"  -> -Z方向の面として面番号{face_number}を割り当て")
+                print(f"  -> -Z方向（背面）として面番号{face_number}を割り当て")
                 return face_number
-        elif abs_x >= abs_y and abs_x >= abs_z:
-            # X軸方向
-            if normal_vec[0] > 0:
-                # +X方向
+                
+        # X軸方向の判定
+        elif abs_x >= threshold and abs_x >= abs_y and abs_x >= abs_z:
+            if normalized_normal[0] > 0:
+                # +X方向（右面）
                 self.face_direction_counters['pos_x'] += 1
                 face_number = 3 + (self.face_direction_counters['pos_x'] - 1) * 10
-                print(f"  -> +X方向の面として面番号{face_number}を割り当て")
+                print(f"  -> +X方向（右面）として面番号{face_number}を割り当て")
                 return face_number
             else:
-                # -X方向
+                # -X方向（左面）
                 self.face_direction_counters['neg_x'] += 1
                 face_number = 4 + (self.face_direction_counters['neg_x'] - 1) * 10
-                print(f"  -> -X方向の面として面番号{face_number}を割り当て")
+                print(f"  -> -X方向（左面）として面番号{face_number}を割り当て")
                 return face_number
-        else:
-            # Y軸方向
-            if normal_vec[1] > 0:
-                # +Y方向
+                
+        # Y軸方向の判定
+        elif abs_y >= threshold and abs_y >= abs_x and abs_y >= abs_z:
+            if normalized_normal[1] > 0:
+                # +Y方向（上面）
                 self.face_direction_counters['pos_y'] += 1
                 face_number = 5 + (self.face_direction_counters['pos_y'] - 1) * 10
-                print(f"  -> +Y方向の面として面番号{face_number}を割り当て")
+                print(f"  -> +Y方向（上面）として面番号{face_number}を割り当て")
                 return face_number
             else:
-                # -Y方向
+                # -Y方向（下面）
                 self.face_direction_counters['neg_y'] += 1
                 face_number = 6 + (self.face_direction_counters['neg_y'] - 1) * 10
-                print(f"  -> -Y方向の面として面番号{face_number}を割り当て")
+                print(f"  -> -Y方向（下面）として面番号{face_number}を割り当て")
                 return face_number
+        else:
+            # その他の方向（斜め面など）
+            self.face_direction_counters['other'] += 1
+            face_number = 7 + (self.face_direction_counters['other'] - 1) * 10
+            print(f"  -> その他の方向として面番号{face_number}を割り当て")
+            return face_number
 
     def _extract_face_boundaries(self, face):
         """

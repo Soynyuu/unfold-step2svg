@@ -275,3 +275,24 @@ class StepUnfoldGenerator:
             import traceback
             traceback.print_exc()
             raise ValueError(f"BREP展開図生成エラー: {str(e)}")
+
+    def get_face_numbers(self) -> List[Dict[str, int]]:
+        """
+        バックエンドで生成された面番号データを取得する。
+        フロントエンドとの面番号統一に使用。
+        
+        Returns:
+            List[Dict]: [{"faceIndex": 0, "faceNumber": 1}, ...] 形式の面番号マッピング
+        """
+        face_numbers = []
+        
+        if self.faces_data:
+            for face_index, face_data in enumerate(self.faces_data):
+                face_number = face_data.get("face_number", face_index + 1)
+                face_numbers.append({
+                    "faceIndex": face_index,
+                    "faceNumber": face_number
+                })
+                
+        print(f"StepUnfoldGenerator.get_face_numbers(): {len(face_numbers)}個の面番号データを返します")
+        return face_numbers
