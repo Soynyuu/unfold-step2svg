@@ -155,15 +155,18 @@ class SVGExporter:
                         center_x = sum(p[0] for p in points) / len(points)
                         center_y = sum(p[1] for p in points) / len(points)
                         
-                        # 面番号テキストを追加
+                        # 面のサイズに基づいてフォントサイズを計算
+                        font_size = self._calculate_face_number_size(points)
+                        
+                        # 面番号テキストを追加（動的サイズで）
                         face_number = group["face_numbers"][poly_idx]
                         dwg.add(dwg.text(
                             str(face_number),
                             insert=(center_x, center_y),
-                            class_="face-number",
+                            style=f"font-family: Arial, sans-serif; font-size: {font_size}px; font-weight: bold; fill: #ff0000; text-anchor: middle;",
                             dominant_baseline="middle"  # 垂直中央揃え
                         ))
-                        print(f"    面番号{face_number}を中心({center_x:.1f}, {center_y:.1f})に描画")
+                        print(f"    面番号{face_number}を中心({center_x:.1f}, {center_y:.1f})にサイズ{font_size:.1f}pxで描画")
                     else:
                         print(f"    面番号なし: poly_idx={poly_idx}, face_numbers存在={('face_numbers' in group)}")
                 else:
@@ -220,6 +223,62 @@ class SVGExporter:
         dwg.add(dwg.text(scale_text, insert=(bar_x + bar_length_px/2, bar_y - 12),
                         text_anchor="middle", class_="scale-text"))
 
+    def _calculate_polygon_area(self, points):
+        """
+        ポリゴンの面積を計算（Shoelace formula）
+        
+        Args:
+            points: ポリゴンの頂点リスト [(x, y), ...]
+            
+        Returns:
+            面積（絶対値）
+        """
+        n = len(points)
+        if n < 3:
+            return 0
+        
+        area = 0
+        for i in range(n):
+            j = (i + 1) % n
+            area += points[i][0] * points[j][1]
+            area -= points[j][0] * points[i][1]
+        
+        return abs(area) / 2
+    
+    def _calculate_face_number_size(self, polygon_points):
+        """
+        面の大きさに基づいて適切なフォントサイズを計算
+        
+        Args:
+            polygon_points: ポリゴンの頂点リスト（SVG座標系）
+            
+        Returns:
+            適切なフォントサイズ（px）
+        """
+        if len(polygon_points) < 3:
+            return 40  # デフォルトサイズ
+        
+        # 境界ボックスを計算
+        xs = [p[0] for p in polygon_points]
+        ys = [p[1] for p in polygon_points]
+        
+        bbox_width = max(xs) - min(xs)
+        bbox_height = max(ys) - min(ys)
+        
+        # 最小辺長を取得
+        min_dimension = min(bbox_width, bbox_height)
+        
+        # フォントサイズを面の最小辺の35%に設定
+        # （番号が面内に収まりやすいサイズ）
+        font_size = min_dimension * 0.35
+        
+        # 最小・最大サイズでクリップ
+        # 最小: 20px（読める最小サイズ）
+        # 最大: 200px（大きすぎない上限）
+        font_size = max(20, min(200, font_size))
+        
+        return font_size
+    
     def _add_technical_notes(self, dwg, svg_width: float, svg_height: float):
         """動的サイズ用技術注記・凡例追加"""
         notes_x = svg_width - 250
