@@ -6,9 +6,17 @@ It provides functionality for:
 - Calculating bounding boxes for groups and overall layout
 - Optimizing group placement to minimize paper usage
 - Translating groups to their final positions
+- Polygon-level overlap detection for accurate placement
 """
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
+try:
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    SHAPELY_AVAILABLE = True
+except ImportError:
+    SHAPELY_AVAILABLE = False
+    print("Warning: Shapely not available. Using bounding box overlap detection only.")
 
 
 class LayoutManager:
@@ -67,14 +75,17 @@ class LayoutManager:
         
         # 重複回避配置アルゴリズム
         placed_groups = []
-        occupied_areas = []  # 既に使用されている領域
+        occupied_areas = []  # 既に使用されている領域（bbox用）
+        placed_polygon_groups = []  # 配置済みポリゴンデータ（ポリゴン重複検出用）
         margin_mm = 8  # 十分な間隔で線の重複を回避
         
         for group in unfolded_groups:
             bbox = group["bbox"]
             
-            # 最適な配置位置を探索
-            position = self._find_non_overlapping_position(bbox, occupied_areas, margin_mm)
+            # 最適な配置位置を探索（bbox判定とポリゴン判定の両方を使用）
+            position = self._find_non_overlapping_position_with_polygons(
+                group, bbox, occupied_areas, placed_polygon_groups, margin_mm
+            )
             
             # グループを配置
             offset_x = position["x"] - bbox["min_x"]
@@ -84,6 +95,7 @@ class LayoutManager:
             positioned_group["position"] = position
             
             placed_groups.append(positioned_group)
+            placed_polygon_groups.append(positioned_group)  # ポリゴンデータも保存
             
             # 占有エリアを記録（マージン込み）
             occupied_area = {
@@ -162,6 +174,131 @@ class LayoutManager:
         translated_group["tabs"] = translated_tabs
         
         return translated_group
+    
+    def _create_shapely_polygon(self, polygon_points: List[Tuple[float, float]]) -> Optional['Polygon']:
+        """
+        Shapelyポリゴンオブジェクトを作成
+        
+        Args:
+            polygon_points: ポリゴンの頂点リスト
+        
+        Returns:
+            Shapelyポリゴンオブジェクト、または作成できない場合None
+        """
+        if not SHAPELY_AVAILABLE or len(polygon_points) < 3:
+            return None
+        
+        try:
+            # 閉じたポリゴンにする（最初と最後の点が異なる場合）
+            if polygon_points[0] != polygon_points[-1]:
+                polygon_points = polygon_points + [polygon_points[0]]
+            return Polygon(polygon_points)
+        except Exception as e:
+            print(f"ポリゴン作成エラー: {e}")
+            return None
+    
+    def _polygons_overlap(self, polygons1: List[List[Tuple[float, float]]], 
+                         polygons2: List[List[Tuple[float, float]]],
+                         offset1: Tuple[float, float] = (0, 0),
+                         offset2: Tuple[float, float] = (0, 0)) -> bool:
+        """
+        2つのポリゴングループが重複するかをチェック
+        
+        Args:
+            polygons1: 最初のポリゴングループ
+            polygons2: 2番目のポリゴングループ
+            offset1: 最初のグループのオフセット
+            offset2: 2番目のグループのオフセット
+        
+        Returns:
+            重複する場合True
+        """
+        if not SHAPELY_AVAILABLE:
+            return False  # Shapelyが利用できない場合はbbox判定に依存
+        
+        # 各グループのポリゴンを移動してShapelyオブジェクトに変換
+        shapely_polys1 = []
+        for poly in polygons1:
+            moved_poly = [(x + offset1[0], y + offset1[1]) for x, y in poly]
+            shapely_poly = self._create_shapely_polygon(moved_poly)
+            if shapely_poly:
+                shapely_polys1.append(shapely_poly)
+        
+        shapely_polys2 = []
+        for poly in polygons2:
+            moved_poly = [(x + offset2[0], y + offset2[1]) for x, y in poly]
+            shapely_poly = self._create_shapely_polygon(moved_poly)
+            if shapely_poly:
+                shapely_polys2.append(shapely_poly)
+        
+        # 各ポリゴンペアで交差チェック
+        for poly1 in shapely_polys1:
+            for poly2 in shapely_polys2:
+                if poly1.intersects(poly2):
+                    # 接触のみか重なりかを確認
+                    intersection = poly1.intersection(poly2)
+                    # 面積のある交差（重なり）か、完全包含をチェック
+                    if intersection.area > 1e-6 or poly1.contains(poly2) or poly2.contains(poly1):
+                        return True
+        
+        return False
+    
+    def _find_non_overlapping_position_with_polygons(
+        self, group: Dict, bbox: Dict, occupied_areas: List[Dict], 
+        placed_polygon_groups: List[Dict], margin_mm: float
+    ) -> Dict:
+        """
+        他のグループと重複しない配置位置を探索（ポリゴンレベルの判定付き）。
+        
+        Args:
+            group: 配置するグループ（ポリゴンデータ含む）
+            bbox: 配置するグループの境界ボックス
+            occupied_areas: 既に占有されている領域のリスト（bbox用）
+            placed_polygon_groups: 配置済みのポリゴングループ
+            margin_mm: 必要なマージン
+        
+        Returns:
+            配置位置 {"x": float, "y": float}
+        """
+        # グリッドベースで位置を探索
+        grid_step = 5  # 5mm刻みで探索
+        max_x = 300  # 最大探索範囲
+        max_y = 400
+        
+        for y in range(0, max_y, grid_step):
+            for x in range(0, max_x, grid_step):
+                candidate_area = {
+                    "min_x": x,
+                    "min_y": y,
+                    "max_x": x + bbox["width"],
+                    "max_y": y + bbox["height"]
+                }
+                
+                # まずbboxレベルで重複チェック（高速）
+                if self._areas_overlap(candidate_area, occupied_areas):
+                    continue
+                
+                # bboxが重複しない場合、ポリゴンレベルでチェック（精密）
+                candidate_offset = (x - bbox["min_x"], y - bbox["min_y"])
+                overlap_found = False
+                
+                if SHAPELY_AVAILABLE and placed_polygon_groups:
+                    for placed_group in placed_polygon_groups:
+                        if self._polygons_overlap(
+                            group["polygons"], 
+                            placed_group["polygons"],
+                            candidate_offset,
+                            (0, 0)  # placed_groupは既に配置済み
+                        ):
+                            overlap_found = True
+                            break
+                
+                if not overlap_found:
+                    return {"x": x, "y": y}
+        
+        # 重複しない位置が見つからない場合は右端に配置
+        rightmost_x = max([area["max_x"] for area in occupied_areas], default=0)
+        return {"x": rightmost_x + margin_mm, "y": 0}
     
     def _find_non_overlapping_position(self, bbox: Dict, occupied_areas: List[Dict], margin_mm: float) -> Dict:
         """
