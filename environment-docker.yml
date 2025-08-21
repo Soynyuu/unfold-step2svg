@@ -5,9 +5,8 @@ dependencies:
   # Python環境
   - python=3.10
   
-  # OpenCASCADE関連 - バージョン指定が重要
-  - pythonocc-core=7.9.0
-  - occt=7.9.0
+  # OpenCASCADE関連 - pythonocc-coreが自動的に適切なOCCTを選択
+  - pythonocc-core=7.8.1
   
   # 必須の科学計算ライブラリ
   - numpy
