@@ -1,6 +1,7 @@
 import os
 import tempfile
 import uuid
+import zipfile
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 from typing import Optional
@@ -18,7 +19,11 @@ router = APIRouter()
 async def unfold_step_to_svg(
     file: UploadFile = File(...),
     return_face_numbers: bool = Form(True),
-    output_format: str = Form("svg")
+    output_format: str = Form("svg"),
+    layout_mode: str = Form("canvas"),
+    page_format: str = Form("A4"),
+    page_orientation: str = Form("portrait"),
+    scale_factor: float = Form(10.0)
 ):
     """
     STEPファイル（.step/.stp）を受け取り、展開図（SVG）を生成するAPI。
@@ -26,15 +31,15 @@ async def unfold_step_to_svg(
     Args:
         file: STEPファイル (.step/.stp)
         return_face_numbers: 面番号データを含むかどうか (default: True)
-        output_format: 出力形式 - "svg"=SVGファイル（デフォルト）、"json"=JSONレスポンス
+        output_format: 出力形式 - "svg"=SVGファイル、"json"=JSONレスポンス
+        layout_mode: レイアウトモード - "canvas"=フリーキャンバス、"paged"=ページ分割 (default: "canvas")
+        page_format: ページフォーマット - "A4", "A3", "Letter" (default: "A4")
+        page_orientation: ページ方向 - "portrait"=縦、"landscape"=横 (default: "portrait")
+        scale_factor: 図の縮尺倍率 (default: 10.0) - 例: 150なら1/150スケール
     
     Returns:
-        - output_format="svg": SVGファイル（従来形式、後方互換性）
-        - output_format="json": JSON: {
-            "svg_content": "SVG文字列",
-            "face_numbers": [{"faceIndex": 0, "faceNumber": 1}, ...],
-            "stats": {...}
-        }
+        - output_format="svg": 単一SVGファイル（pagedモードでは全ページを縦に並べて表示）
+        - output_format="json": JSONレスポンス
     """
     if not OCCT_AVAILABLE:
         raise HTTPException(status_code=503, detail="OpenCASCADE Technology が利用できません。STEPファイル処理に必要です。")
@@ -53,43 +58,50 @@ async def unfold_step_to_svg(
             raise HTTPException(status_code=400, detail="STEPファイルの読み込みに失敗しました。")
         output_path = os.path.join(tempfile.mkdtemp(), f"step_unfold_{uuid.uuid4()}.svg")
         
-        # デフォルトパラメータでBrepPapercraftRequestを作成
-        request = BrepPapercraftRequest()
+        # レイアウトオプションを含むBrepPapercraftRequestを作成
+        request = BrepPapercraftRequest(
+            layout_mode=layout_mode,
+            page_format=page_format,
+            page_orientation=page_orientation,
+            scale_factor=scale_factor
+        )
         svg_path, stats = step_unfold_generator.generate_brep_papercraft(request, output_path)
         
         # 出力形式に応じてレスポンスを分岐
         if output_format.lower() == "json":
-            # JSONレスポンス形式（新形式）
-            # SVGファイルの内容を読み込み
+            # JSONレスポンス形式
             with open(svg_path, 'r', encoding='utf-8') as svg_file:
                 svg_content = svg_file.read()
             
-            # レスポンスデータを作成
             response_data = {
                 "svg_content": svg_content,
                 "stats": stats
             }
             
-            # 面番号データを含める場合
-            if return_face_numbers:
-                # StepUnfoldGeneratorから面番号データを取得
-                face_numbers = step_unfold_generator.get_face_numbers()
-                response_data["face_numbers"] = face_numbers
-                print(f"API Response: 面番号データ {len(face_numbers)}個を含むJSONレスポンスを返します")
-            
-            # 一時ファイルをクリーンアップ
             try:
                 os.unlink(svg_path)
             except:
                 pass
             
+            # 面番号データを含める場合
+            if return_face_numbers:
+                face_numbers = step_unfold_generator.get_face_numbers()
+                response_data["face_numbers"] = face_numbers
+            
             return response_data
         else:
-            # SVGファイルレスポンス（従来形式、後方互換性）
+            # SVGファイルレスポンス
+            # ページモードでも単一ファイルに全ページが含まれる
             return FileResponse(
                 path=svg_path,
                 media_type="image/svg+xml",
-                filename=f"step_unfold_{uuid.uuid4()}.svg"
+                filename=f"step_unfold_{layout_mode}_{uuid.uuid4()}.svg",
+                headers={
+                    "X-Layout-Mode": layout_mode,
+                    "X-Page-Format": page_format if layout_mode == "paged" else "N/A",
+                    "X-Page-Orientation": page_orientation if layout_mode == "paged" else "N/A",
+                    "X-Page-Count": str(stats.get("page_count", 1)) if layout_mode == "paged" else "1"
+                }
             )
         
     except ValueError as e:

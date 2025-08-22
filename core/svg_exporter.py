@@ -14,7 +14,8 @@ class SVGExporter:
     def __init__(self, scale_factor: float = 10.0, units: str = "mm", 
                  tab_width: float = 5.0, show_scale: bool = True,
                  show_fold_lines: bool = True, show_cut_lines: bool = True,
-                 page_format: str = "A4"):
+                 page_format: str = "A4", layout_mode: str = "canvas",
+                 page_orientation: str = "portrait"):
         """
         SVGExporterを初期化。
         
@@ -26,6 +27,8 @@ class SVGExporter:
             show_fold_lines: 折り線を表示するか
             show_cut_lines: 切断線を表示するか
             page_format: ページフォーマット (A4, A3, Letter)
+            layout_mode: レイアウトモード ("canvas" or "paged")
+            page_orientation: ページ方向 ("portrait" or "landscape")
         """
         self.scale_factor = scale_factor
         self.units = units
@@ -34,17 +37,24 @@ class SVGExporter:
         self.show_fold_lines = show_fold_lines
         self.show_cut_lines = show_cut_lines
         self.page_format = page_format
+        self.layout_mode = layout_mode
+        self.page_orientation = page_orientation
         
-        # A4サイズの定義 (210x297mm -> px at 96 DPI)
-        self.page_sizes = {
-            "A4": {"width": 794, "height": 1123, "width_mm": 210, "height_mm": 297},
-            "A3": {"width": 1123, "height": 1587, "width_mm": 297, "height_mm": 420},
-            "Letter": {"width": 816, "height": 1056, "width_mm": 216, "height_mm": 279}
+        # ページサイズの定義 (mm単位)
+        self.page_sizes_mm = {
+            "A4": {"width": 210, "height": 297},
+            "A3": {"width": 297, "height": 420},
+            "Letter": {"width": 216, "height": 279}
         }
         
-        # 印刷マージン (mm -> px)
-        self.print_margin_mm = 10  # 10mm margin
-        self.print_margin_px = self.print_margin_mm * 3.78  # 96 DPI conversion
+        # ピクセル変換係数 (96 DPI)
+        self.mm_to_px = 3.78
+        
+        # 印刷マージン (mm)
+        self.print_margin_mm = 10
+        
+        # 現在のページサイズを計算
+        self._calculate_page_dimensions()
     
     def export_to_svg(self, placed_groups: List[Dict], output_path: str,
                      layout_manager=None) -> str:
@@ -69,35 +79,19 @@ class SVGExporter:
         else:
             overall_bbox = self._calculate_overall_bbox(placed_groups)
         
-        # ページサイズ取得
-        page_size = self.page_sizes[self.page_format]
-        
         print(f"ページフォーマット: {self.page_format}")
         print(f"全体境界ボックス: {overall_bbox}")
         
-        # 適切なスケール計算（線が読めるサイズ確保）
-        if overall_bbox["width"] > 0 and overall_bbox["height"] > 0:
-            # 最小/最大スケールの範囲で調整
-            min_scale = 3.0  # 線が見える最小サイズ
-            max_scale = 15.0  # 過度に大きくならない
-            
-            # 内容サイズに応じた適切なスケール
-            if max(overall_bbox["width"], overall_bbox["height"]) < 50:
-                # 小さい図形は大きく
-                optimal_scale = max_scale
-            elif max(overall_bbox["width"], overall_bbox["height"]) > 200:
-                # 大きい図形は適度に
-                optimal_scale = min_scale
-            else:
-                # 中程度の図形は中間スケール
-                optimal_scale = (min_scale + max_scale) / 2
-            
-            self.scale_factor = optimal_scale
-            print(f"最適スケール: {self.scale_factor:.2f}")
+        # scale_factorはAPIから渡される値を使用（自動調整しない）
+        # scale_factor=150なら1/150スケール → 実際の描画倍率は基準倍率/scale_factor
+        # 基準倍率を10とし、scale_factorで割る
+        base_scale = 10.0  # 基準描画倍率
+        actual_scale = base_scale / self.scale_factor if self.scale_factor > 0 else base_scale
+        print(f"縮尺: 1/{self.scale_factor:.0f} (描画倍率: {actual_scale:.2f})")
         
         # SVGサイズを内容に合わせて動的調整
-        scaled_content_width = overall_bbox["width"] * self.scale_factor
-        scaled_content_height = overall_bbox["height"] * self.scale_factor
+        scaled_content_width = overall_bbox["width"] * actual_scale
+        scaled_content_height = overall_bbox["height"] * actual_scale
         
         # 十分な余白を確保
         margin = 50
@@ -130,8 +124,8 @@ class SVGExporter:
         """))
         
         # メインコンテンツを適切にオフセット
-        content_offset_x = margin - overall_bbox["min_x"] * self.scale_factor
-        content_offset_y = margin + 60 - overall_bbox["min_y"] * self.scale_factor  # タイトル分下げる
+        content_offset_x = margin - overall_bbox["min_x"] * actual_scale
+        content_offset_y = margin + 60 - overall_bbox["min_y"] * actual_scale  # タイトル分下げる
         
         polygon_count = 0
         
@@ -143,7 +137,7 @@ class SVGExporter:
             for poly_idx, polygon in enumerate(group["polygons"]):
                 if len(polygon) >= 3:
                     # スケールファクターを適用
-                    points = [(x * self.scale_factor + content_offset_x, y * self.scale_factor + content_offset_y) for x, y in polygon]
+                    points = [(x * actual_scale + content_offset_x, y * actual_scale + content_offset_y) for x, y in polygon]
                     dwg.add(dwg.polygon(points=points, class_="face-polygon"))
                     polygon_count += 1
                     print(f"  ポリゴン{poly_idx}: {len(polygon)}点を描画")
@@ -176,7 +170,7 @@ class SVGExporter:
             for tab_idx, tab in enumerate(group.get("tabs", [])):
                 if len(tab) >= 3:
                     # スケールファクターを適用
-                    points = [(x * self.scale_factor + content_offset_x, y * self.scale_factor + content_offset_y) for x, y in tab]
+                    points = [(x * actual_scale + content_offset_x, y * actual_scale + content_offset_y) for x, y in tab]
                     dwg.add(dwg.polygon(points=points, class_="tab-polygon"))
                     print(f"  タブ{tab_idx}: {len(tab)}点を描画")
         
@@ -188,7 +182,8 @@ class SVGExporter:
         title_y = 40
         dwg.add(dwg.text(title, insert=(title_x, title_y), text_anchor="middle", class_="title-text"))
         
-        # スケールバー描画
+        # スケールバー描画（actual_scaleを渡す）
+        self._add_scale_bar_with_scale(dwg, svg_width, svg_height, actual_scale)
         
         # 注記追加
         self._add_technical_notes(dwg, svg_width, svg_height)
@@ -197,11 +192,11 @@ class SVGExporter:
         dwg.save()
         return output_path
     
-    def _add_scale_bar(self, dwg, svg_width: float, svg_height: float):
+    def _add_scale_bar_with_scale(self, dwg, svg_width: float, svg_height: float, actual_scale: float):
         """動的サイズ用スケールバー追加"""
         # スケールバー仕様
         bar_length_mm = 50.0  # 50mm (5cm)
-        bar_length_px = bar_length_mm * self.scale_factor / 10  # スケールに合わせて調整
+        bar_length_px = bar_length_mm * actual_scale / 10  # スケールに合わせて調整
         
         # 配置位置 (左下)
         bar_x = 50
@@ -256,7 +251,7 @@ class SVGExporter:
             適切なフォントサイズ（px）
         """
         if len(polygon_points) < 3:
-            return 40  # デフォルトサイズ
+            return 12  # デフォルトサイズを小さく
         
         # 境界ボックスを計算
         xs = [p[0] for p in polygon_points]
@@ -268,14 +263,13 @@ class SVGExporter:
         # 最小辺長を取得
         min_dimension = min(bbox_width, bbox_height)
         
-        # フォントサイズを面の最小辺の35%に設定
-        # （番号が面内に収まりやすいサイズ）
-        font_size = min_dimension * 0.35
+        # フォントサイズを面の最小辺の25%に設定（より控えめなサイズ）
+        font_size = min_dimension * 0.25
         
-        # 最小・最大サイズでクリップ
-        # 最小: 20px（読める最小サイズ）
-        # 最大: 200px（大きすぎない上限）
-        font_size = max(20, min(200, font_size))
+        # 最小・最大サイズでクリップ（A4印刷向けに調整）
+        # 最小: 10px（読める最小サイズ）
+        # 最大: 48px（印刷向け上限）
+        font_size = max(10, min(48, font_size))
         
         return font_size
     
@@ -328,12 +322,324 @@ class SVGExporter:
             "height": max_y - min_y
         }
     
+    def _calculate_page_dimensions(self):
+        """
+        ページ方向を考慮してページ寸法を計算
+        """
+        base_size = self.page_sizes_mm[self.page_format]
+        
+        if self.page_orientation == "landscape":
+            # 横向きの場合、幅と高さを入れ替え
+            self.page_width_mm = base_size["height"]
+            self.page_height_mm = base_size["width"]
+        else:
+            # 縦向きの場合、そのまま使用
+            self.page_width_mm = base_size["width"]
+            self.page_height_mm = base_size["height"]
+        
+        # ピクセル変換
+        self.page_width_px = self.page_width_mm * self.mm_to_px
+        self.page_height_px = self.page_height_mm * self.mm_to_px
+        
+        # 印刷可能エリア計算
+        self.printable_width_mm = self.page_width_mm - 2 * self.print_margin_mm
+        self.printable_height_mm = self.page_height_mm - 2 * self.print_margin_mm
+        self.printable_width_px = self.printable_width_mm * self.mm_to_px
+        self.printable_height_px = self.printable_height_mm * self.mm_to_px
+
+    def export_to_svg_paged_single_file(self, paged_groups: List[List[Dict]], output_path: str) -> str:
+        """
+        ページ単位で分割された展開図を単一のSVGファイルに出力。
+        各ページを縦に並べて表示し、印刷時にページ区切りが明確になるようにする。
+        
+        Args:
+            paged_groups: ページごとにグループ化された展開図データ
+            output_path: 出力パス
+        
+        Returns:
+            str: 出力されたSVGファイルのパス
+        """
+        if not paged_groups:
+            raise ValueError("出力する展開図データがありません")
+        
+        # 全体のSVGサイズを計算（全ページを縦に並べる）
+        total_height = self.page_height_px * len(paged_groups)
+        page_gap = 20  # ページ間の隙間（視覚的区切り）
+        total_height_with_gaps = total_height + page_gap * (len(paged_groups) - 1)
+        
+        # SVG作成（全ページを含む大きさ）
+        dwg = svgwrite.Drawing(
+            output_path,
+            size=(f"{self.page_width_px}px", f"{total_height_with_gaps}px"),
+            viewBox=f"0 0 {self.page_width_px} {total_height_with_gaps}"
+        )
+        
+        # スタイル定義
+        dwg.defs.add(dwg.style("""
+            .face-polygon { fill: none; stroke: #000000; stroke-width: 2; }
+            .tab-polygon { fill: none; stroke: #0066cc; stroke-width: 1.5; stroke-dasharray: 4,4; }
+            .page-border { fill: white; stroke: #999999; stroke-width: 2; stroke-dasharray: 10,5; }
+            .page-separator { stroke: #666666; stroke-width: 1; stroke-dasharray: 20,10; }
+            .cut-mark { stroke: #000000; stroke-width: 0.5; }
+            .page-number { font-family: Arial, sans-serif; font-size: 14px; fill: #333333; font-weight: bold; }
+            .face-number { font-family: Arial, sans-serif; font-weight: bold; fill: #ff0000; text-anchor: middle; }
+            .page-label { font-family: Arial, sans-serif; font-size: 12px; fill: #666666; }
+        """))
+        
+        margin_px = self.print_margin_mm * self.mm_to_px
+        
+        # 各ページを描画
+        for page_num, page_groups in enumerate(paged_groups, 1):
+            # ページのY座標オフセット
+            page_y_offset = (self.page_height_px + page_gap) * (page_num - 1)
+            
+            # ページ背景（白）と境界線
+            dwg.add(dwg.rect(
+                insert=(0, page_y_offset),
+                size=(self.page_width_px, self.page_height_px),
+                class_="page-border"
+            ))
+            
+            # 印刷可能エリアの境界線
+            dwg.add(dwg.rect(
+                insert=(margin_px, page_y_offset + margin_px),
+                size=(self.printable_width_px, self.printable_height_px),
+                style="fill: none; stroke: #cccccc; stroke-width: 1; stroke-dasharray: 5,5;"
+            ))
+            
+            # カットマークを追加（四隅）
+            mark_length = 15
+            corners = [
+                (0, page_y_offset),
+                (self.page_width_px, page_y_offset),
+                (0, page_y_offset + self.page_height_px),
+                (self.page_width_px, page_y_offset + self.page_height_px)
+            ]
+            
+            for x, y in corners:
+                # 横線
+                dwg.add(dwg.line(
+                    start=(x - mark_length if x > self.page_width_px/2 else x, y),
+                    end=(x + mark_length if x < self.page_width_px/2 else x, y),
+                    class_="cut-mark"
+                ))
+                # 縦線
+                dwg.add(dwg.line(
+                    start=(x, y - mark_length if y > page_y_offset + self.page_height_px/2 else y),
+                    end=(x, y + mark_length if y < page_y_offset + self.page_height_px/2 else y),
+                    class_="cut-mark"
+                ))
+            
+            # グループを描画（mm単位の座標をpxに変換）
+            for group in page_groups:
+                # 面ポリゴン描画
+                for poly_idx, polygon in enumerate(group.get("polygons", [])):
+                    if len(polygon) >= 3:
+                        # mm単位の座標をピクセルに変換（scale_factorは使わず、mm_to_pxで変換）
+                        points = [
+                            (x * self.mm_to_px + margin_px, 
+                             y * self.mm_to_px + margin_px + page_y_offset) 
+                            for x, y in polygon
+                        ]
+                        dwg.add(dwg.polygon(points=points, class_="face-polygon"))
+                        
+                        # 面番号を描画
+                        if "face_numbers" in group and poly_idx < len(group["face_numbers"]):
+                            center_x = sum(p[0] for p in points) / len(points)
+                            center_y = sum(p[1] for p in points) / len(points)
+                            font_size = self._calculate_face_number_size(points)
+                            face_number = group["face_numbers"][poly_idx]
+                            
+                            dwg.add(dwg.text(
+                                str(face_number),
+                                insert=(center_x, center_y),
+                                style=f"font-family: Arial, sans-serif; font-size: {font_size}px; font-weight: bold; fill: #ff0000; text-anchor: middle;",
+                                dominant_baseline="middle"
+                            ))
+                
+                # タブ描画
+                for tab in group.get("tabs", []):
+                    if len(tab) >= 3:
+                        points = [
+                            (x * self.mm_to_px + margin_px, 
+                             y * self.mm_to_px + margin_px + page_y_offset) 
+                            for x, y in tab
+                        ]
+                        dwg.add(dwg.polygon(points=points, class_="tab-polygon"))
+            
+            # ページ番号とフォーマット情報
+            dwg.add(dwg.text(
+                f"Page {page_num} / {len(paged_groups)} - {self.page_format} {self.page_orientation.capitalize()}",
+                insert=(self.page_width_px / 2, page_y_offset + self.page_height_px - 10),
+                text_anchor="middle",
+                class_="page-number"
+            ))
+            
+            # タイトル（各ページの上部）
+            dwg.add(dwg.text(
+                f"Diorama-CAD (mitou-jr)",
+                insert=(self.page_width_px / 2, page_y_offset + 25),
+                text_anchor="middle",
+                style="font-family: Arial, sans-serif; font-size: 16px; fill: #000000; font-weight: bold;"
+            ))
+            
+            # ページ区切り線（最後のページ以外）
+            if page_num < len(paged_groups):
+                separator_y = page_y_offset + self.page_height_px + page_gap / 2
+                dwg.add(dwg.line(
+                    start=(0, separator_y),
+                    end=(self.page_width_px, separator_y),
+                    class_="page-separator"
+                ))
+        
+        # SVG保存
+        dwg.save()
+        print(f"単一SVGファイルに{len(paged_groups)}ページを出力: {output_path}")
+        return output_path
+
+    def export_to_svg_paged(self, paged_groups: List[List[Dict]], output_dir: str) -> List[str]:
+        """
+        ページ単位で分割された展開図をSVG形式で出力。
+        各ページが印刷可能なサイズに収まるように配置。
+        
+        Args:
+            paged_groups: ページごとにグループ化された展開図データ
+            output_dir: 出力ディレクトリパス
+        
+        Returns:
+            List[str]: 出力されたSVGファイルのパスリスト
+        """
+        if not paged_groups:
+            raise ValueError("出力する展開図データがありません")
+        
+        svg_paths = []
+        
+        for page_num, page_groups in enumerate(paged_groups, 1):
+            # 各ページのSVGを生成
+            output_path = os.path.join(output_dir, f"page_{page_num:02d}.svg")
+            
+            # SVG作成 (印刷用固定サイズ)
+            dwg = svgwrite.Drawing(
+                output_path,
+                size=(f"{self.page_width_px}px", f"{self.page_height_px}px"),
+                viewBox=f"0 0 {self.page_width_px} {self.page_height_px}"
+            )
+            
+            # ページ用スタイル定義
+            dwg.defs.add(dwg.style("""
+                .face-polygon { fill: none; stroke: #000000; stroke-width: 2; }
+                .tab-polygon { fill: none; stroke: #0066cc; stroke-width: 1.5; stroke-dasharray: 4,4; }
+                .page-border { fill: none; stroke: #cccccc; stroke-width: 1; stroke-dasharray: 10,5; }
+                .cut-mark { stroke: #000000; stroke-width: 0.5; }
+                .page-number { font-family: Arial, sans-serif; font-size: 12px; fill: #666666; }
+                .face-number { font-family: Arial, sans-serif; font-weight: bold; fill: #ff0000; text-anchor: middle; }
+            """))
+            
+            # ページ境界線を描画
+            margin_px = self.print_margin_mm * self.mm_to_px
+            dwg.add(dwg.rect(
+                insert=(margin_px, margin_px),
+                size=(self.printable_width_px, self.printable_height_px),
+                class_="page-border"
+            ))
+            
+            # scale_factorから実際の描画倍率を計算
+            base_scale = 10.0  # 基準描画倍率
+            actual_scale = base_scale / self.scale_factor if self.scale_factor > 0 else base_scale
+            
+            # カットマークを追加（四隅）
+            mark_length = 10
+            corners = [
+                (margin_px, margin_px),
+                (self.page_width_px - margin_px, margin_px),
+                (margin_px, self.page_height_px - margin_px),
+                (self.page_width_px - margin_px, self.page_height_px - margin_px)
+            ]
+            
+            for x, y in corners:
+                # 横線
+                dwg.add(dwg.line(
+                    start=(x - mark_length if x > self.page_width_px/2 else x, y),
+                    end=(x + mark_length if x < self.page_width_px/2 else x, y),
+                    class_="cut-mark"
+                ))
+                # 縦線
+                dwg.add(dwg.line(
+                    start=(x, y - mark_length if y > self.page_height_px/2 else y),
+                    end=(x, y + mark_length if y < self.page_height_px/2 else y),
+                    class_="cut-mark"
+                ))
+            
+            # グループを描画
+            for group in page_groups:
+                # 面ポリゴン描画
+                for poly_idx, polygon in enumerate(group.get("polygons", [])):
+                    if len(polygon) >= 3:
+                        # ページマージンを考慮した配置
+                        points = [
+                            (x * actual_scale + margin_px, 
+                             y * actual_scale + margin_px) 
+                            for x, y in polygon
+                        ]
+                        dwg.add(dwg.polygon(points=points, class_="face-polygon"))
+                        
+                        # 面番号を描画
+                        if "face_numbers" in group and poly_idx < len(group["face_numbers"]):
+                            center_x = sum(p[0] for p in points) / len(points)
+                            center_y = sum(p[1] for p in points) / len(points)
+                            font_size = self._calculate_face_number_size(points)
+                            face_number = group["face_numbers"][poly_idx]
+                            
+                            dwg.add(dwg.text(
+                                str(face_number),
+                                insert=(center_x, center_y),
+                                style=f"font-family: Arial, sans-serif; font-size: {font_size}px; font-weight: bold; fill: #ff0000; text-anchor: middle;",
+                                dominant_baseline="middle"
+                            ))
+                
+                # タブ描画
+                for tab in group.get("tabs", []):
+                    if len(tab) >= 3:
+                        points = [
+                            (x * actual_scale + margin_px, 
+                             y * actual_scale + margin_px) 
+                            for x, y in tab
+                        ]
+                        dwg.add(dwg.polygon(points=points, class_="tab-polygon"))
+            
+            # ページ番号を追加
+            dwg.add(dwg.text(
+                f"Page {page_num} / {len(paged_groups)}",
+                insert=(self.page_width_px / 2, self.page_height_px - 20),
+                text_anchor="middle",
+                class_="page-number"
+            ))
+            
+            # タイトルとプロジェクト情報
+            dwg.add(dwg.text(
+                f"Diorama-CAD (mitou-jr) - {self.page_format} {self.page_orientation.capitalize()}",
+                insert=(self.page_width_px / 2, 20),
+                text_anchor="middle",
+                style="font-family: Arial, sans-serif; font-size: 14px; fill: #000000;"
+            ))
+            
+            # SVG保存
+            dwg.save()
+            svg_paths.append(output_path)
+            
+            print(f"ページ {page_num} を出力: {output_path}")
+        
+        return svg_paths
+
     def update_settings(self, scale_factor: Optional[float] = None, 
                        units: Optional[str] = None, 
                        tab_width: Optional[float] = None,
                        show_scale: Optional[bool] = None,
                        show_fold_lines: Optional[bool] = None,
-                       show_cut_lines: Optional[bool] = None):
+                       show_cut_lines: Optional[bool] = None,
+                       layout_mode: Optional[str] = None,
+                       page_format: Optional[str] = None,
+                       page_orientation: Optional[str] = None):
         """
         設定を更新する
         """
@@ -349,3 +655,11 @@ class SVGExporter:
             self.show_fold_lines = show_fold_lines
         if show_cut_lines is not None:
             self.show_cut_lines = show_cut_lines
+        if layout_mode is not None:
+            self.layout_mode = layout_mode
+        if page_format is not None:
+            self.page_format = page_format
+            self._calculate_page_dimensions()
+        if page_orientation is not None:
+            self.page_orientation = page_orientation
+            self._calculate_page_dimensions()

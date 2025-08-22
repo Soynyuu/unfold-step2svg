@@ -80,6 +80,9 @@ class StepUnfoldGenerator:
         
         # レイアウトマネージャー
         self.layout_manager = LayoutManager(scale_factor=self.scale_factor)
+        self.layout_mode = "canvas"  # デフォルトはフリーキャンバスモード
+        self.page_format = "A4"
+        self.page_orientation = "portrait"
         self.units = "mm"           # 単位系：寸法の解釈基準
         self.tab_width = 5.0        # タブ幅：接着部の物理的寸法
         self.show_scale = True      # スケールバー：図面標準への準拠
@@ -93,7 +96,10 @@ class StepUnfoldGenerator:
             tab_width=self.tab_width,
             show_scale=self.show_scale,
             show_fold_lines=self.show_fold_lines,
-            show_cut_lines=self.show_cut_lines
+            show_cut_lines=self.show_cut_lines,
+            layout_mode=self.layout_mode,
+            page_format=self.page_format,
+            page_orientation=self.page_orientation
         )
         
         # ═══ 処理統計情報：品質管理と性能監視のためのメトリクス ═══
@@ -218,11 +224,34 @@ class StepUnfoldGenerator:
             tab_width=self.tab_width,
             show_scale=self.show_scale,
             show_fold_lines=self.show_fold_lines,
-            show_cut_lines=self.show_cut_lines
+            show_cut_lines=self.show_cut_lines,
+            layout_mode=self.layout_mode,
+            page_format=self.page_format,
+            page_orientation=self.page_orientation
         )
         
         # SVGエクスポーターに処理を委譲
         return self.svg_exporter.export_to_svg(placed_groups, output_path, self.layout_manager)
+    
+    def export_to_svg_paged_single_file(self, paged_groups: List[List[Dict]], output_path: str) -> str:
+        """
+        ページ分割された展開図を単一のSVGファイルに出力。
+        """
+        # SVGエクスポーターの設定を更新
+        self.svg_exporter.update_settings(
+            scale_factor=self.scale_factor,
+            units=self.units,
+            tab_width=self.tab_width,
+            show_scale=self.show_scale,
+            show_fold_lines=self.show_fold_lines,
+            show_cut_lines=self.show_cut_lines,
+            layout_mode=self.layout_mode,
+            page_format=self.page_format,
+            page_orientation=self.page_orientation
+        )
+        
+        # SVGエクスポーターに処理を委譲
+        return self.svg_exporter.export_to_svg_paged_single_file(paged_groups, output_path)
 
 
 
@@ -248,6 +277,19 @@ class StepUnfoldGenerator:
             self.show_scale = request.show_scale
             self.show_fold_lines = request.show_fold_lines
             self.show_cut_lines = request.show_cut_lines
+            self.layout_mode = request.layout_mode
+            self.page_format = request.page_format
+            self.page_orientation = request.page_orientation
+            
+            # UnfoldEngine、LayoutManager、SVGExporterのscale_factorを更新
+            self.unfold_engine.scale_factor = self.scale_factor
+            self.unfold_engine.tab_width = self.tab_width
+            self.layout_manager.scale_factor = self.scale_factor
+            self.svg_exporter.scale_factor = self.scale_factor
+            self.svg_exporter.tab_width = self.tab_width
+            self.svg_exporter.layout_mode = self.layout_mode
+            self.svg_exporter.page_format = self.page_format
+            self.svg_exporter.page_orientation = self.page_orientation
             
             # 1. BREPトポロジ解析
             self.analyze_brep_topology()
@@ -258,16 +300,37 @@ class StepUnfoldGenerator:
             # 3. 各グループの2D展開
             unfolded_groups = self.unfold_face_groups()
             
-            # 4. グループ配置最適化
-            placed_groups = self.layout_unfolded_groups(unfolded_groups)
-            
-            # 5. SVG出力
-            svg_path = self.export_to_svg(placed_groups, output_path)
+            # 4. レイアウトモードに応じた配置
+            if self.layout_mode == "paged":
+                # ページモード: ページ単位でレイアウト
+                self.layout_manager.update_page_settings(
+                    page_format=self.page_format,
+                    page_orientation=self.page_orientation
+                )
+                paged_groups = self.layout_manager.layout_for_pages(unfolded_groups)
+                
+                # 5. 単一SVGファイルに全ページを出力
+                svg_path = self.export_to_svg_paged_single_file(paged_groups, output_path)
+                
+                # 統計情報にページ数を追加
+                self.stats["page_count"] = len(paged_groups)
+                self.stats["svg_files"] = [svg_path]  # 単一ファイル
+            else:
+                # キャンバスモード: 従来の単一SVG
+                placed_groups = self.layout_unfolded_groups(unfolded_groups)
+                
+                # 5. SVG出力
+                svg_path = self.export_to_svg(placed_groups, output_path)
             
             # 処理統計更新
             end_time = time.time()
             self.stats["processing_time"] = end_time - start_time
-            self.stats["unfoldable_faces"] = sum(len(group["polygons"]) for group in placed_groups)
+            self.stats["unfoldable_faces"] = sum(
+                len(group["polygons"]) 
+                for page in (paged_groups if self.layout_mode == "paged" else [placed_groups])
+                for group in (page if self.layout_mode == "paged" else placed_groups)
+            )
+            self.stats["layout_mode"] = self.layout_mode
             
             return svg_path, self.stats
             

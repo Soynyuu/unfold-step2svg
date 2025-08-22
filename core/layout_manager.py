@@ -25,14 +25,17 @@ class LayoutManager:
     重複回避・用紙サイズ最適化・効率的な配置アルゴリズムを提供。
     """
     
-    def __init__(self, scale_factor: float = 10.0, page_format: str = "A4"):
+    def __init__(self, scale_factor: float = 10.0, page_format: str = "A4",
+                 page_orientation: str = "portrait"):
         """
         Args:
             scale_factor: スケール倍率（デジタル-物理変換比率）
             page_format: ページフォーマット (A4, A3, Letter)
+            page_orientation: ページ方向 ("portrait" or "landscape")
         """
         self.scale_factor = scale_factor
         self.page_format = page_format
+        self.page_orientation = page_orientation
         
         # ページサイズ定義 (mm単位)
         self.page_sizes_mm = {
@@ -43,6 +46,9 @@ class LayoutManager:
         
         # 印刷マージン (mm)
         self.print_margin_mm = 10
+        
+        # 現在のページ寸法を計算
+        self._calculate_page_dimensions()
     
     def layout_unfolded_groups(self, unfolded_groups: List[Dict]) -> List[Dict]:
         """
@@ -392,6 +398,158 @@ class LayoutManager:
             "height": max_y - min_y
         }
     
+    def _calculate_page_dimensions(self):
+        """
+        ページ方向を考慮してページ寸法を計算
+        """
+        base_size = self.page_sizes_mm[self.page_format]
+        
+        if self.page_orientation == "landscape":
+            # 横向きの場合、幅と高さを入れ替え
+            self.page_width_mm = base_size["height"]
+            self.page_height_mm = base_size["width"]
+        else:
+            # 縦向きの場合、そのまま使用
+            self.page_width_mm = base_size["width"]
+            self.page_height_mm = base_size["height"]
+        
+        # 印刷可能エリア計算
+        self.printable_width_mm = self.page_width_mm - 2 * self.print_margin_mm
+        self.printable_height_mm = self.page_height_mm - 2 * self.print_margin_mm
+
+    def layout_for_pages(self, unfolded_groups: List[Dict]) -> List[List[Dict]]:
+        """
+        展開済みグループをページ単位で配置。
+        各ページが印刷可能サイズに収まるようにbinpacking。
+        
+        Args:
+            unfolded_groups: 展開済みグループのリスト
+            
+        Returns:
+            ページごとに配置されたグループのリスト
+        """
+        if not unfolded_groups:
+            return []
+        
+        # 各グループの境界ボックス計算
+        for group in unfolded_groups:
+            bbox = self._calculate_group_bbox(group["polygons"])
+            group["bbox"] = bbox
+            
+            # グループがページサイズを超える場合は警告
+            if bbox["width"] > self.printable_width_mm or bbox["height"] > self.printable_height_mm:
+                print(f"警告: グループサイズ({bbox['width']:.1f}x{bbox['height']:.1f}mm)が" +
+                      f"印刷可能エリア({self.printable_width_mm}x{self.printable_height_mm}mm)を超えています")
+                
+                # スケールダウンが必要
+                scale_x = self.printable_width_mm / bbox["width"] if bbox["width"] > self.printable_width_mm else 1.0
+                scale_y = self.printable_height_mm / bbox["height"] if bbox["height"] > self.printable_height_mm else 1.0
+                scale = min(scale_x, scale_y) * 0.9  # 90%のサイズに縮小してマージンを確保
+                
+                # グループをスケールダウン
+                scaled_polygons = []
+                for polygon in group["polygons"]:
+                    scaled_polygon = [(x * scale, y * scale) for x, y in polygon]
+                    scaled_polygons.append(scaled_polygon)
+                group["polygons"] = scaled_polygons
+                
+                scaled_tabs = []
+                for tab in group.get("tabs", []):
+                    scaled_tab = [(x * scale, y * scale) for x, y in tab]
+                    scaled_tabs.append(scaled_tab)
+                group["tabs"] = scaled_tabs
+                
+                # 境界ボックスを再計算
+                bbox = self._calculate_group_bbox(group["polygons"])
+                group["bbox"] = bbox
+                print(f"  -> スケール調整後: {bbox['width']:.1f}x{bbox['height']:.1f}mm")
+        
+        # 面積の大きい順にソート
+        unfolded_groups.sort(key=lambda g: g["bbox"]["width"] * g["bbox"]["height"], reverse=True)
+        
+        # ページ単位で配置
+        paged_groups = []
+        current_page = []
+        page_occupied_areas = []
+        margin_mm = 5  # ページ内のアイテム間マージン
+        
+        for group in unfolded_groups:
+            bbox = group["bbox"]
+            
+            # 現在のページに配置を試みる
+            position = self._find_position_in_page(
+                bbox, page_occupied_areas, 
+                self.printable_width_mm, self.printable_height_mm, margin_mm
+            )
+            
+            if position is None:
+                # 現在のページに収まらない場合、新しいページを開始
+                if current_page:
+                    paged_groups.append(current_page)
+                    current_page = []
+                    page_occupied_areas = []
+                
+                # 新しいページの最初に配置
+                position = {"x": 0, "y": 0}
+            
+            # グループを配置
+            offset_x = position["x"] - bbox["min_x"]
+            offset_y = position["y"] - bbox["min_y"]
+            
+            positioned_group = self._translate_group(group, offset_x, offset_y)
+            positioned_group["position"] = position
+            current_page.append(positioned_group)
+            
+            # 占有エリアを記録
+            occupied_area = {
+                "min_x": position["x"] - margin_mm,
+                "min_y": position["y"] - margin_mm,
+                "max_x": position["x"] + bbox["width"] + margin_mm,
+                "max_y": position["y"] + bbox["height"] + margin_mm
+            }
+            page_occupied_areas.append(occupied_area)
+        
+        # 最後のページを追加
+        if current_page:
+            paged_groups.append(current_page)
+        
+        print(f"ページレイアウト完了: {len(paged_groups)}ページに分割")
+        return paged_groups
+
+    def _find_position_in_page(self, bbox: Dict, occupied_areas: List[Dict],
+                               max_width: float, max_height: float,
+                               margin: float) -> Optional[Dict]:
+        """
+        ページ内で重複しない位置を探索。
+        
+        Args:
+            bbox: 配置するグループの境界ボックス
+            occupied_areas: 既に占有されている領域のリスト
+            max_width: ページの最大幅
+            max_height: ページの最大高さ
+            margin: マージン
+        
+        Returns:
+            配置位置またはNone（配置不可の場合）
+        """
+        # グリッドベースで位置を探索
+        grid_step = 5  # 5mm刻み
+        
+        for y in range(0, int(max_height - bbox["height"]), grid_step):
+            for x in range(0, int(max_width - bbox["width"]), grid_step):
+                candidate_area = {
+                    "min_x": x,
+                    "min_y": y,
+                    "max_x": x + bbox["width"],
+                    "max_y": y + bbox["height"]
+                }
+                
+                # 既存エリアとの重複チェック
+                if not self._areas_overlap(candidate_area, occupied_areas):
+                    return {"x": x, "y": y}
+        
+        return None  # 配置可能な位置が見つからない
+
     def update_scale_factor(self, scale_factor: float):
         """
         スケール倍率を更新
@@ -400,3 +558,18 @@ class LayoutManager:
             scale_factor: 新しいスケール倍率
         """
         self.scale_factor = scale_factor
+    
+    def update_page_settings(self, page_format: Optional[str] = None,
+                           page_orientation: Optional[str] = None):
+        """
+        ページ設定を更新
+        
+        Args:
+            page_format: ページフォーマット
+            page_orientation: ページ方向
+        """
+        if page_format is not None:
+            self.page_format = page_format
+        if page_orientation is not None:
+            self.page_orientation = page_orientation
+        self._calculate_page_dimensions()
