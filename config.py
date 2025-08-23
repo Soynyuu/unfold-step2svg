@@ -88,7 +88,9 @@ def setup_cors(app: FastAPI) -> None:
         
         origins.extend([
             "http://localhost:8080",
-            "http://127.0.0.1:8080"
+            "http://127.0.0.1:8080",
+            "https://diorama-cad.soynyuu.com",
+            "https://backend-diorama.soynyuu.com"
         ])
         
         app.add_middleware(
