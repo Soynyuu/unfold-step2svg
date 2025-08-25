@@ -447,13 +447,14 @@ class CityJSONProcessor:
             from core.citygml_solidifier import SolidificationResult
             converted_results = []
             for r in solidification_results:
-                converted = SolidificationResult(
-                    success=r.success,
-                    building_id=r.building_id,
-                    solid=r.solid,
-                    shell=r.shell,
-                    compound=r.compound
-                )
+                converted = SolidificationResult()
+                converted.success = r.success
+                converted.solid = r.solid
+                converted.shell = r.shell
+                converted.compound = r.compound
+                converted.error_message = r.error_message
+                converted.is_valid = r.is_valid
+                converted.is_closed = r.is_closed
                 converted_results.append(converted)
             
             brep_exporter = BREPExporter()
@@ -469,13 +470,14 @@ class CityJSONProcessor:
             from core.citygml_solidifier import SolidificationResult
             converted_results = []
             for r in solidification_results:
-                converted = SolidificationResult(
-                    success=r.success,
-                    building_id=r.building_id,
-                    solid=r.solid,
-                    shell=r.shell,
-                    compound=r.compound
-                )
+                converted = SolidificationResult()
+                converted.success = r.success
+                converted.solid = r.solid
+                converted.shell = r.shell
+                converted.compound = r.compound
+                converted.error_message = r.error_message
+                converted.is_valid = r.is_valid
+                converted.is_closed = r.is_closed
                 converted_results.append(converted)
             return self.exporter.export_solidification_results(converted_results, output_path)
         else:
@@ -487,13 +489,14 @@ class CityJSONProcessor:
             from core.citygml_solidifier import SolidificationResult
             converted_results = []
             for r in solidification_results:
-                converted = SolidificationResult(
-                    success=r.success,
-                    building_id=r.building_id,
-                    solid=r.solid,
-                    shell=r.shell,
-                    compound=r.compound
-                )
+                converted = SolidificationResult()
+                converted.success = r.success
+                converted.solid = r.solid
+                converted.shell = r.shell
+                converted.compound = r.compound
+                converted.error_message = r.error_message
+                converted.is_valid = r.is_valid
+                converted.is_closed = r.is_closed
                 converted_results.append(converted)
             return step_exporter.export_solidification_results(converted_results, output_path)
     
