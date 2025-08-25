@@ -343,6 +343,59 @@ class CityJSONConverter:
         
         return surfaces
     
+    def get_building_surfaces_with_holes(self, building: CityJSONBuilding) -> List[List[List[Tuple[float, float, float]]]]:
+        """
+        Extract surface polygons with holes from a CityJSON building
+        
+        Args:
+            building: CityJSONBuilding object
+            
+        Returns:
+            List of surfaces, where each surface is a list of rings (first ring is exterior, rest are holes)
+        """
+        surfaces_with_holes = []
+        
+        for geom in building.geometry:
+            geom_type = geom.get("type")
+            
+            if geom_type == "Solid":
+                # Solid: boundaries[shell][surface][ring][vertex_indices]
+                for shell in geom.get("boundaries", []):
+                    for surface in shell:
+                        rings = []
+                        # Get all rings (exterior and interior)
+                        for ring_indices in surface:
+                            vertices = self._get_vertices_from_indices(ring_indices, building.vertices)
+                            if vertices:
+                                rings.append(vertices)
+                        if rings:
+                            surfaces_with_holes.append(rings)
+                                
+            elif geom_type == "MultiSurface":
+                # MultiSurface: boundaries[surface][ring][vertex_indices]
+                for surface in geom.get("boundaries", []):
+                    rings = []
+                    # Get all rings (exterior and interior)
+                    for ring_indices in surface:
+                        vertices = self._get_vertices_from_indices(ring_indices, building.vertices)
+                        if vertices:
+                            rings.append(vertices)
+                    if rings:
+                        surfaces_with_holes.append(rings)
+                            
+            elif geom_type == "CompositeSurface":
+                # CompositeSurface: similar to MultiSurface
+                for surface in geom.get("boundaries", []):
+                    rings = []
+                    for ring_indices in surface:
+                        vertices = self._get_vertices_from_indices(ring_indices, building.vertices)
+                        if vertices:
+                            rings.append(vertices)
+                    if rings:
+                        surfaces_with_holes.append(rings)
+        
+        return surfaces_with_holes
+    
     def _get_vertices_from_indices(self, indices: List[int], vertices: List[List[float]]) -> List[Tuple[float, float, float]]:
         """
         Convert vertex indices to actual coordinates

@@ -20,7 +20,7 @@ if OCCT_AVAILABLE:
     from OCC.Core.BRepBuilderAPI import (
         BRepBuilderAPI_MakeWire, BRepBuilderAPI_MakeEdge,
         BRepBuilderAPI_MakeFace, BRepBuilderAPI_Sewing, 
-        BRepBuilderAPI_MakeSolid
+        BRepBuilderAPI_MakeSolid, BRepBuilderAPI_MakeShell
     )
     from OCC.Core.BRepCheck import BRepCheck_Analyzer
     from OCC.Core.ShapeFix import ShapeFix_Shape, ShapeFix_Wire, ShapeFix_Face
@@ -132,44 +132,68 @@ class CityJSONSolidifier:
             solid = None
             
             try:
-                shell = topods.Shell(sewed_shape)
+                # Check the type of sewed shape
+                from OCC.Core.TopAbs import TopAbs_SHELL, TopAbs_COMPOUND, TopAbs_FACE
+                from OCC.Core.TopExp import TopExp_Explorer
                 
-                # Check if shell is closed
-                analyzer = BRepCheck_Analyzer(shell)
-                is_closed = analyzer.IsValid()
+                shape_type = sewed_shape.ShapeType()
                 
-                if is_closed:
-                    # Try to create solid from closed shell
-                    try:
-                        solid_maker = BRepBuilderAPI_MakeSolid(shell)
-                        if solid_maker.IsDone():
-                            solid = solid_maker.Solid()
-                            
-                            # Apply healing if enabled
-                            if self.enable_healing:
-                                solid = self._heal_shape(solid)
-                            
-                            # Validate solid
-                            is_valid = self._validate_solid(solid)
-                            
+                if shape_type == TopAbs_SHELL:
+                    # Sewing produced a shell directly
+                    shell = topods.Shell(sewed_shape)
+                else:
+                    # Try to extract a shell from the shape
+                    explorer = TopExp_Explorer(sewed_shape, TopAbs_SHELL)
+                    if explorer.More():
+                        shell = topods.Shell(explorer.Current())
+                    else:
+                        # If no shell, try to build one from faces
+                        shell_builder = BRepBuilderAPI_MakeShell()
+                        face_explorer = TopExp_Explorer(sewed_shape, TopAbs_FACE)
+                        while face_explorer.More():
+                            shell_builder.Add(topods.Face(face_explorer.Current()))
+                            face_explorer.Next()
+                        
+                        if shell_builder.IsDone():
+                            shell = shell_builder.Shell()
+                
+                if shell:
+                    # Check if shell is closed
+                    analyzer = BRepCheck_Analyzer(shell)
+                    is_closed = analyzer.IsValid()
+                    
+                    if is_closed:
+                        # Try to create solid from closed shell
+                        try:
+                            solid_maker = BRepBuilderAPI_MakeSolid(shell)
+                            if solid_maker.IsDone():
+                                solid = solid_maker.Solid()
+                                
+                                # Apply healing if enabled
+                                if self.enable_healing:
+                                    solid = self._heal_shape(solid)
+                                
+                                # Validate solid
+                                is_valid = self._validate_solid(solid)
+                                
+                                if self.debug_mode:
+                                    print(f"Created solid for building {building.building_id}")
+                                    print(f"Solid is valid: {is_valid}")
+                                
+                                return CityJSONSolidificationResult(
+                                    success=True,
+                                    building_id=building.building_id,
+                                    solid=solid,
+                                    shell=shell,
+                                    faces=faces,
+                                    face_count=len(faces),
+                                    is_closed=True,
+                                    is_valid=is_valid,
+                                    processing_time=time.time() - start_time
+                                )
+                        except Exception as e:
                             if self.debug_mode:
-                                print(f"Created solid for building {building.building_id}")
-                                print(f"Solid is valid: {is_valid}")
-                            
-                            return CityJSONSolidificationResult(
-                                success=True,
-                                building_id=building.building_id,
-                                solid=solid,
-                                shell=shell,
-                                faces=faces,
-                                face_count=len(faces),
-                                is_closed=True,
-                                is_valid=is_valid,
-                                processing_time=time.time() - start_time
-                            )
-                    except Exception as e:
-                        if self.debug_mode:
-                            print(f"Could not create solid: {e}")
+                                print(f"Could not create solid: {e}")
                 
                 # Return shell if solid creation failed
                 if self.debug_mode:
