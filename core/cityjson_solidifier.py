@@ -27,7 +27,7 @@ if OCCT_AVAILABLE:
     from OCC.Core.BRepClass3d import BRepClass3d_SolidClassifier
     from OCC.Core.TopoDS import (
         TopoDS_Face, TopoDS_Shell, TopoDS_Solid, 
-        TopoDS_Compound, TopoDS_Wire, topods_Shell
+        TopoDS_Compound, TopoDS_Wire, topods
     )
     from OCC.Core.BRep import BRep_Builder
     from OCC.Core.TopAbs import TopAbs_IN, TopAbs_OUT, TopAbs_ON
@@ -132,7 +132,7 @@ class CityJSONSolidifier:
             solid = None
             
             try:
-                shell = topods_Shell(sewed_shape)
+                shell = topods.Shell(sewed_shape)
                 
                 # Check if shell is closed
                 analyzer = BRepCheck_Analyzer(shell)
