@@ -9,6 +9,7 @@ from typing import Optional
 from config import OCCT_AVAILABLE
 from services.step_processor import StepUnfoldGenerator
 from services.citygml_processor import CityGMLProcessor, CityGMLProcessingOptions
+from services.cityjson_processor import CityJSONProcessor, CityJSONProcessingOptions
 from models.request_models import BrepPapercraftRequest
 
 # APIルーターの作成
@@ -480,6 +481,479 @@ async def validate_citygml_file(file: UploadFile = File(...)):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"検証エラー: {str(e)}")
 
+# --- CityJSON Pipeline APIエンドポイント (V2) ---
+@router.post("/api/citygml/to-brep-v2")
+async def convert_citygml_to_brep_v2(
+    file: UploadFile = File(...),
+    preferred_lod: Optional[int] = Form(2),
+    min_building_area: Optional[float] = Form(None),
+    max_building_count: Optional[int] = Form(None),
+    tolerance: Optional[float] = Form(1e-5),
+    export_individual_files: Optional[bool] = Form(False),
+    validate_geometry: Optional[bool] = Form(True),
+    triangulate_surfaces: Optional[bool] = Form(False),
+    remove_duplicate_vertices: Optional[bool] = Form(True),
+    debug_mode: Optional[bool] = Form(False)
+):
+    """
+    CityGMLファイルをCityJSON中間形式経由でBREPに変換する改良版API。
+    より正確な幾何学処理と検証機能を提供。
+    
+    CityJSON Pipeline Features:
+    - CityJSON中間形式による処理の簡素化
+    - ISO 19107準拠の幾何学検証（val3dity）
+    - 面の向き自動修正と穴の適切な処理
+    - cjioによる前処理（三角化、重複頂点除去）
+    
+    Improvements over V1:
+    - より正確な面の向き処理
+    - 穴（内環）の適切なサポート
+    - ISO準拠の幾何学検証
+    - 改善されたエラーレポート
+    """
+    if not OCCT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="OpenCASCADE Technology が利用できません。")
+    
+    try:
+        # ファイル拡張子チェック
+        if not (file.filename.lower().endswith('.gml') or 
+                file.filename.lower().endswith('.xml') or
+                file.filename.lower().endswith('.citygml')):
+            raise HTTPException(status_code=400, detail="CityGMLファイル（.gml/.xml/.citygml）のみ対応です。")
+        
+        # ファイル内容を読み込み
+        file_content = await file.read()
+        
+        # 前処理オプションを構築
+        preprocess_operations = []
+        if remove_duplicate_vertices:
+            preprocess_operations.append("remove_duplicate_vertices")
+        if triangulate_surfaces:
+            preprocess_operations.append("triangulate")
+        
+        # 処理オプションを設定
+        options = CityJSONProcessingOptions(
+            preferred_lod=preferred_lod or 2,
+            min_building_area=min_building_area,
+            max_building_count=max_building_count,
+            tolerance=tolerance or 1e-5,
+            export_individual_files=export_individual_files or False,
+            export_format="brep",
+            validate_geometry=validate_geometry if validate_geometry is not None else True,
+            preprocess_operations=preprocess_operations,
+            triangulate_surfaces=triangulate_surfaces or False,
+            remove_duplicate_vertices=remove_duplicate_vertices if remove_duplicate_vertices is not None else True,
+            fix_orientation=True,
+            enable_healing=True,
+            debug_mode=debug_mode or False,
+            save_intermediate=debug_mode or False
+        )
+        
+        # CityJSONプロセッサーを初期化
+        processor = CityJSONProcessor(options)
+        
+        # 出力パスを生成
+        if export_individual_files:
+            output_base = os.path.join(tempfile.mkdtemp(), f"citygml_buildings_v2_{uuid.uuid4()}")
+            output_path = output_base + ".brep"
+        else:
+            output_path = os.path.join(tempfile.mkdtemp(), f"citygml_to_brep_v2_{uuid.uuid4()}.brep")
+        
+        # CityGMLを処理してBREPに変換
+        result = processor.process_citygml(file_content, output_path)
+        
+        if not result.success:
+            # 詳細なエラー情報を提供
+            error_detail = {
+                "message": result.error_message,
+                "buildings_parsed": result.buildings_parsed,
+                "buildings_processed": result.buildings_processed,
+                "buildings_converted": result.buildings_converted,
+                "validation_performed": result.validation_performed
+            }
+            
+            if result.validation_result:
+                error_detail["validation_errors"] = result.validation_result.error_count
+                error_detail["validator_used"] = result.validation_result.validator_used
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"CityJSON Pipeline変換に失敗しました: {result.error_message}",
+                headers={
+                    "X-Buildings-Parsed": str(result.buildings_parsed),
+                    "X-Buildings-Processed": str(result.buildings_processed),
+                    "X-Buildings-Converted": str(result.buildings_converted),
+                    "X-Validation-Performed": str(result.validation_performed),
+                    "X-Pipeline-Version": "v2-cityjson"
+                }
+            )
+        
+        if export_individual_files:
+            # 個別ファイルの場合はZIPアーカイブとして返す
+            zip_path = output_path.replace('.brep', '.zip')
+            
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                building_dir = result.output_file_path
+                if os.path.isdir(building_dir):
+                    for root, dirs, files in os.walk(building_dir):
+                        for file_name in files:
+                            if file_name.endswith('.brep'):
+                                file_path = os.path.join(root, file_name)
+                                zipf.write(file_path, file_name)
+            
+            return FileResponse(
+                path=zip_path,
+                media_type="application/zip",
+                filename=f"citygml_buildings_v2_{uuid.uuid4()}.zip",
+                headers={
+                    "X-Buildings-Parsed": str(result.buildings_parsed),
+                    "X-Buildings-Converted": str(result.buildings_converted),
+                    "X-Solids-Created": str(result.solids_created),
+                    "X-Shells-Created": str(result.shells_created),
+                    "X-Processing-Time": str(round(result.total_time, 2)),
+                    "X-Pipeline-Version": "v2-cityjson",
+                    "X-Validation-Performed": str(result.validation_performed)
+                }
+            )
+        else:
+            # 単一BREPファイルとして返す
+            response_headers = {
+                "X-Buildings-Parsed": str(result.buildings_parsed),
+                "X-Buildings-Converted": str(result.buildings_converted),
+                "X-Solids-Created": str(result.solids_created),
+                "X-Shells-Created": str(result.shells_created),
+                "X-Compounds-Created": str(result.compounds_created),
+                "X-Processing-Time": str(round(result.total_time, 2)),
+                "X-Conversion-Time": str(round(result.conversion_time, 3)),
+                "X-Validation-Time": str(round(result.validation_time, 3)),
+                "X-Solidification-Time": str(round(result.solidification_time, 3)),
+                "X-Export-Time": str(round(result.export_time, 3)),
+                "X-Pipeline-Version": "v2-cityjson",
+                "X-Validation-Performed": str(result.validation_performed)
+            }
+            
+            # 検証結果を追加
+            if result.validation_result:
+                response_headers["X-Validation-Valid"] = str(result.validation_result.is_valid)
+                response_headers["X-Validation-Errors"] = str(result.validation_result.error_count)
+                response_headers["X-Validator-Used"] = result.validation_result.validator_used
+            
+            # 前処理結果を追加
+            if result.preprocessing_result:
+                response_headers["X-Preprocessing-Applied"] = ",".join(result.preprocessing_result.operations_applied)
+            
+            return FileResponse(
+                path=result.output_file_path,
+                media_type="application/octet-stream",
+                filename=f"citygml_to_brep_v2_{uuid.uuid4()}.brep",
+                headers=response_headers
+            )
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"予期しないエラー: {str(e)}")
+
+@router.post("/api/citygml/to-step-v2")
+async def convert_citygml_to_step_v2(
+    file: UploadFile = File(...),
+    preferred_lod: Optional[int] = Form(2),
+    min_building_area: Optional[float] = Form(None),
+    max_building_count: Optional[int] = Form(None),
+    tolerance: Optional[float] = Form(1e-5),
+    export_individual_files: Optional[bool] = Form(False),
+    validate_geometry: Optional[bool] = Form(True),
+    triangulate_surfaces: Optional[bool] = Form(False),
+    remove_duplicate_vertices: Optional[bool] = Form(True),
+    debug_mode: Optional[bool] = Form(False)
+):
+    """
+    CityGMLファイルをCityJSON中間形式経由でSTEPに変換する改良版API。
+    より正確な幾何学処理と検証機能を提供。
+    
+    CityJSON Pipeline Features:
+    - CityJSON中間形式による処理の簡素化
+    - ISO 19107準拠の幾何学検証（val3dity）
+    - 面の向き自動修正と穴の適切な処理
+    - cjioによる前処理（三角化、重複頂点除去）
+    
+    Improvements over V1:
+    - より正確な面の向き処理
+    - 穴（内環）の適切なサポート
+    - ISO準拠の幾何学検証
+    - 改善されたエラーレポート
+    """
+    if not OCCT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="OpenCASCADE Technology が利用できません。")
+    
+    try:
+        # ファイル拡張子チェック
+        if not (file.filename.lower().endswith('.gml') or 
+                file.filename.lower().endswith('.xml') or
+                file.filename.lower().endswith('.citygml')):
+            raise HTTPException(status_code=400, detail="CityGMLファイル（.gml/.xml/.citygml）のみ対応です。")
+        
+        # ファイル内容を読み込み
+        file_content = await file.read()
+        
+        # 前処理オプションを構築
+        preprocess_operations = []
+        if remove_duplicate_vertices:
+            preprocess_operations.append("remove_duplicate_vertices")
+        if triangulate_surfaces:
+            preprocess_operations.append("triangulate")
+        
+        # 処理オプションを設定
+        options = CityJSONProcessingOptions(
+            preferred_lod=preferred_lod or 2,
+            min_building_area=min_building_area,
+            max_building_count=max_building_count,
+            tolerance=tolerance or 1e-5,
+            export_individual_files=export_individual_files or False,
+            export_format="step",  # STEP format
+            validate_geometry=validate_geometry if validate_geometry is not None else True,
+            preprocess_operations=preprocess_operations,
+            triangulate_surfaces=triangulate_surfaces or False,
+            remove_duplicate_vertices=remove_duplicate_vertices if remove_duplicate_vertices is not None else True,
+            fix_orientation=True,
+            enable_healing=True,
+            debug_mode=debug_mode or False,
+            save_intermediate=debug_mode or False
+        )
+        
+        # CityJSONプロセッサーを初期化
+        processor = CityJSONProcessor(options)
+        
+        # 出力パスを生成
+        if export_individual_files:
+            output_base = os.path.join(tempfile.mkdtemp(), f"citygml_buildings_v2_{uuid.uuid4()}")
+            output_path = output_base + ".step"
+        else:
+            output_path = os.path.join(tempfile.mkdtemp(), f"citygml_to_step_v2_{uuid.uuid4()}.step")
+        
+        # CityGMLを処理してSTEPに変換
+        result = processor.process_citygml(file_content, output_path)
+        
+        if not result.success:
+            # 詳細なエラー情報を提供
+            error_detail = {
+                "message": result.error_message,
+                "buildings_parsed": result.buildings_parsed,
+                "buildings_processed": result.buildings_processed,
+                "buildings_converted": result.buildings_converted,
+                "validation_performed": result.validation_performed
+            }
+            
+            if result.validation_result:
+                error_detail["validation_errors"] = result.validation_result.error_count
+                error_detail["validator_used"] = result.validation_result.validator_used
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"CityJSON Pipeline変換に失敗しました: {result.error_message}",
+                headers={
+                    "X-Buildings-Parsed": str(result.buildings_parsed),
+                    "X-Buildings-Processed": str(result.buildings_processed),
+                    "X-Buildings-Converted": str(result.buildings_converted),
+                    "X-Validation-Performed": str(result.validation_performed),
+                    "X-Pipeline-Version": "v2-cityjson"
+                }
+            )
+        
+        if export_individual_files:
+            # 個別ファイルの場合はZIPアーカイブとして返す
+            zip_path = output_path.replace('.step', '.zip')
+            
+            with zipfile.ZipFile(zip_path, 'w') as zipf:
+                building_dir = result.output_file_path
+                if os.path.isdir(building_dir):
+                    for root, dirs, files in os.walk(building_dir):
+                        for file_name in files:
+                            if file_name.endswith('.step'):
+                                file_path = os.path.join(root, file_name)
+                                zipf.write(file_path, file_name)
+            
+            return FileResponse(
+                path=zip_path,
+                media_type="application/zip",
+                filename=f"citygml_buildings_v2_{uuid.uuid4()}.zip",
+                headers={
+                    "X-Buildings-Parsed": str(result.buildings_parsed),
+                    "X-Buildings-Converted": str(result.buildings_converted),
+                    "X-Solids-Created": str(result.solids_created),
+                    "X-Shells-Created": str(result.shells_created),
+                    "X-Processing-Time": str(round(result.total_time, 2)),
+                    "X-Pipeline-Version": "v2-cityjson",
+                    "X-Validation-Performed": str(result.validation_performed)
+                }
+            )
+        else:
+            # 単一STEPファイルとして返す
+            response_headers = {
+                "X-Buildings-Parsed": str(result.buildings_parsed),
+                "X-Buildings-Converted": str(result.buildings_converted),
+                "X-Solids-Created": str(result.solids_created),
+                "X-Shells-Created": str(result.shells_created),
+                "X-Compounds-Created": str(result.compounds_created),
+                "X-Processing-Time": str(round(result.total_time, 2)),
+                "X-Conversion-Time": str(round(result.conversion_time, 3)),
+                "X-Validation-Time": str(round(result.validation_time, 3)),
+                "X-Solidification-Time": str(round(result.solidification_time, 3)),
+                "X-Export-Time": str(round(result.export_time, 3)),
+                "X-Pipeline-Version": "v2-cityjson",
+                "X-Validation-Performed": str(result.validation_performed)
+            }
+            
+            # 検証結果を追加
+            if result.validation_result:
+                response_headers["X-Validation-Valid"] = str(result.validation_result.is_valid)
+                response_headers["X-Validation-Errors"] = str(result.validation_result.error_count)
+                response_headers["X-Validator-Used"] = result.validation_result.validator_used
+            
+            # 前処理結果を追加
+            if result.preprocessing_result:
+                response_headers["X-Preprocessing-Applied"] = ",".join(result.preprocessing_result.operations_applied)
+            
+            return FileResponse(
+                path=result.output_file_path,
+                media_type="application/step",
+                filename=f"citygml_to_step_v2_{uuid.uuid4()}.step",
+                headers=response_headers
+            )
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"予期しないエラー: {str(e)}")
+
+@router.post("/api/cityjson/to-brep")
+async def convert_cityjson_to_brep(
+    file: UploadFile = File(...),
+    preferred_lod: Optional[int] = Form(2),
+    max_building_count: Optional[int] = Form(None),
+    tolerance: Optional[float] = Form(1e-5),
+    validate_geometry: Optional[bool] = Form(True),
+    triangulate_surfaces: Optional[bool] = Form(False),
+    remove_duplicate_vertices: Optional[bool] = Form(True),
+    debug_mode: Optional[bool] = Form(False)
+):
+    """
+    CityJSONファイル（.city.json/.json）を直接BREPに変換するAPI。
+    CityGML変換をスキップして高速処理。
+    
+    Direct CityJSON Processing:
+    - CityJSONファイルを直接入力として受け取る
+    - CityGML→CityJSON変換ステップをスキップ
+    - 高速な処理とメモリ効率
+    
+    Supported Features:
+    - ISO 19107準拠の幾何学検証
+    - 面の向き自動修正と穴の処理
+    - cjioによる前処理オプション
+    """
+    if not OCCT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="OpenCASCADE Technology が利用できません。")
+    
+    try:
+        # ファイル拡張子チェック
+        if not (file.filename.lower().endswith('.json') or 
+                file.filename.lower().endswith('.cityjson') or
+                file.filename.lower().endswith('.city.json')):
+            raise HTTPException(status_code=400, detail="CityJSONファイル（.json/.city.json/.cityjson）のみ対応です。")
+        
+        # ファイル内容を読み込み
+        file_content = await file.read()
+        
+        # CityJSONとしてパース
+        import json
+        try:
+            cityjson_data = json.loads(file_content)
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"無効なJSONファイル: {str(e)}")
+        
+        # CityJSONの基本検証
+        if cityjson_data.get("type") != "CityJSON":
+            raise HTTPException(status_code=400, detail="無効なCityJSONファイル: 'type'フィールドが'CityJSON'ではありません")
+        
+        # 前処理オプションを構築
+        preprocess_operations = []
+        if remove_duplicate_vertices:
+            preprocess_operations.append("remove_duplicate_vertices")
+        if triangulate_surfaces:
+            preprocess_operations.append("triangulate")
+        
+        # 処理オプションを設定
+        options = CityJSONProcessingOptions(
+            preferred_lod=preferred_lod or 2,
+            max_building_count=max_building_count,
+            tolerance=tolerance or 1e-5,
+            export_format="brep",
+            validate_geometry=validate_geometry if validate_geometry is not None else True,
+            preprocess_operations=preprocess_operations,
+            triangulate_surfaces=triangulate_surfaces or False,
+            remove_duplicate_vertices=remove_duplicate_vertices if remove_duplicate_vertices is not None else True,
+            fix_orientation=True,
+            enable_healing=True,
+            debug_mode=debug_mode or False,
+            use_citygml_tools=False  # Skip CityGML conversion
+        )
+        
+        # CityJSONプロセッサーを初期化
+        processor = CityJSONProcessor(options)
+        
+        # 出力パスを生成
+        output_path = os.path.join(tempfile.mkdtemp(), f"cityjson_to_brep_{uuid.uuid4()}.brep")
+        
+        # CityJSONを直接処理
+        # Note: process_cityjson_direct is a simplified version - for full implementation,
+        # we would need to extract the processing logic from process_citygml
+        result = processor.process_cityjson_direct(file_content, output_path)
+        
+        if not result.success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CityJSON変換に失敗しました: {result.error_message}",
+                headers={
+                    "X-Buildings-Parsed": str(result.buildings_parsed),
+                    "X-Buildings-Converted": str(result.buildings_converted),
+                    "X-Validation-Performed": str(result.validation_performed)
+                }
+            )
+        
+        # BREPファイルとして返す
+        response_headers = {
+            "X-Buildings-Parsed": str(result.buildings_parsed),
+            "X-Buildings-Converted": str(result.buildings_converted),
+            "X-Solids-Created": str(result.solids_created),
+            "X-Shells-Created": str(result.shells_created),
+            "X-Processing-Time": str(round(result.total_time, 2)),
+            "X-Validation-Performed": str(result.validation_performed),
+            "X-Input-Format": "CityJSON"
+        }
+        
+        # 検証結果を追加
+        if result.validation_result:
+            response_headers["X-Validation-Valid"] = str(result.validation_result.is_valid)
+            response_headers["X-Validation-Errors"] = str(result.validation_result.error_count)
+        
+        return FileResponse(
+            path=result.output_file_path,
+            media_type="application/octet-stream",
+            filename=f"cityjson_to_brep_{uuid.uuid4()}.brep",
+            headers=response_headers
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"予期しないエラー: {str(e)}")
+
 # --- ヘルスチェック ---
 @router.get("/api/health")
 async def api_health_check():
@@ -491,6 +965,16 @@ async def api_health_check():
             capabilities = processor.get_processing_capabilities()
         except:
             capabilities = {"error": "Could not initialize CityGML processor"}
+    
+    # CityJSONプロセッサーの機能情報を取得
+    cityjson_capabilities = {}
+    if OCCT_AVAILABLE:
+        try:
+            from services.cityjson_processor import CityJSONProcessor
+            cityjson_processor = CityJSONProcessor()
+            cityjson_capabilities = cityjson_processor.get_processing_capabilities()
+        except:
+            cityjson_capabilities = {"error": "Could not initialize CityJSON processor"}
     
     # IFC処理能力をチェック
     ifc_capabilities = {}
@@ -511,14 +995,16 @@ async def api_health_check():
     
     return {
         "status": "healthy" if OCCT_AVAILABLE else "degraded",
-        "version": "2.3.0",  # Added BREP export support for Plateau buildings
+        "version": "2.4.0",  # Added CityJSON pipeline support
         "opencascade_available": OCCT_AVAILABLE,
-        "supported_formats": ["step", "brep", "gml", "xml", "citygml"] if OCCT_AVAILABLE else [],
+        "supported_formats": ["step", "brep", "gml", "xml", "citygml", "cityjson", "city.json"] if OCCT_AVAILABLE else [],
         "citygml_capabilities": capabilities,
+        "cityjson_capabilities": cityjson_capabilities,
         "ifc_capabilities": ifc_capabilities,
         "conversion_pipelines": {
             "legacy_opencascade": OCCT_AVAILABLE,
             "ifc_intermediate": ifc_capabilities.get("ifcopenshell_available", False),
+            "cityjson_intermediate": bool(cityjson_capabilities and not cityjson_capabilities.get("error")),
             "brep_export": OCCT_AVAILABLE  # Direct BREP export for CAD software
         },
         "geometry_features": {
@@ -526,6 +1012,9 @@ async def api_health_check():
             "multi_lod_support": True,
             "building_classification": True,
             "geometry_validation": True,
+            "iso_19107_validation": cityjson_capabilities.get("validator", {}).get("iso_19107_compliant", False),
+            "face_orientation_fix": True,
+            "hole_support": True,
             "error_reporting": "enhanced",
             "brep_export": OCCT_AVAILABLE,
             "individual_building_export": True
@@ -535,6 +1024,11 @@ async def api_health_check():
             "lod_filtering": [0, 1, 2],
             "building_scale_tolerance": "1e-5",
             "individual_brep_export": True,
-            "batch_processing": True
+            "batch_processing": True,
+            "cityjson_pipeline": True
+        },
+        "api_versions": {
+            "v1": ["citygml/to-step", "citygml/to-brep"],
+            "v2": ["citygml/to-step-v2", "citygml/to-brep-v2", "cityjson/to-brep"]
         }
     }
