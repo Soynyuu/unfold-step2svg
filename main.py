@@ -2,12 +2,16 @@ import os
 import uvicorn
 from config import create_app, OCCT_AVAILABLE
 from api.endpoints import router
+from api.websocket import websocket_router
 
 # FastAPIアプリケーションの作成
 app = create_app()
 
 # APIルーターの追加
 app.include_router(router)
+
+# WebSocketルーターの追加
+app.include_router(websocket_router)
 
 def main():
     """サーバーを起動する"""
