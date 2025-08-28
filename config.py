@@ -38,11 +38,10 @@ CORS_ALLOW_ALL = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
 # アプリケーション設定
 APP_CONFIG = {
     "title": "unfold-step2svg",
-    "description": "STEPソリッドモデル（.step/.stp）を高精度展開図（SVG）に変換するAPI。",
-    "version": "1.0.0"
+    "description": "unfold step model to svg",
+    "version": "1.0.0",
     "contact": {
         "name": "Kodai MIYAZAKI",
-        "description": "商用グレードSTEP-to-SVG変換技術の専門チーム"
     }
 }
 
@@ -74,6 +73,7 @@ def setup_cors(app: FastAPI) -> None:
         origins.extend([
             "http://localhost:8080",
             "http://127.0.0.1:8080",
+            "http://localhost:8081",
             "https://diorama-cad.soynyuu.com",
             "https://backend-diorama.soynyuu.com"
         ])
