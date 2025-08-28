@@ -21,20 +21,33 @@ python main.py  # Starts on localhost:8001
 # Test endpoints
 curl http://localhost:8001/api/health
 
+# Test STEP to SVG conversion
+curl -X POST \
+  -F "file=@model.step" \
+  http://localhost:8001/api/step/unfold \
+  -o papercraft.svg
+
 # Test scripts
 bash test_face_numbers.sh     # Test face numbering feature
 bash test_layout_modes.sh     # Test different layout modes
 python test_brep_export.py    # Test BREP export methods
+python test_face_numbering.py # Test face numbering functionality
+python test_polygon_overlap.py # Test polygon intersection detection
 ```
 
 ## Architecture
 
-**Processing Pipeline:**
-1. **File Loading** (`core/file_loaders.py`) - STEP/BREP parsing
-2. **Geometry Analysis** (`core/geometry_analyzer.py`) - Face classification
-3. **Unfolding** (`core/unfold_engine.py`) - 3D to 2D transformation
-4. **Layout** (`core/layout_manager.py`) - Page optimization
+**Core Processing Pipeline:**
+1. **File Loading** (`core/file_loaders.py`) - STEP/BREP parsing using OpenCASCADE
+2. **Geometry Analysis** (`core/geometry_analyzer.py`) - Face classification (planar, cylindrical, conical)
+3. **Unfolding** (`core/unfold_engine.py`) - 3D to 2D transformation algorithms
+4. **Layout** (`core/layout_manager.py`) - Page optimization with two modes:
+   - Canvas mode: Dynamic canvas size
+   - Paged mode: Fixed page sizes (A4, A3, Letter)
 5. **Export** (`core/svg_exporter.py`) - SVG generation with face numbering
+
+**Service Layer:**
+- `services/step_processor.py` - Main orchestrator class `StepUnfoldGenerator` that coordinates the pipeline
 
 **Support Modules:**
 - `core/brep_exporter.py` - BREP format export functionality
@@ -43,45 +56,64 @@ python test_brep_export.py    # Test BREP export methods
 ## API Endpoints
 
 ```bash
-# STEP to SVG papercraft
 POST /api/step/unfold
-  Parameters: file, return_face_numbers, output_format, layout_mode, page_format, page_orientation, scale_factor
+  # Required:
+  - file: STEP file (.step or .stp)
+  
+  # Optional parameters:
+  - return_face_numbers: bool (default: True)
+  - output_format: "svg" | "json" (default: "svg")
+  - layout_mode: "canvas" | "paged" (default: "canvas")
+  - page_format: "A4" | "A3" | "Letter" (default: "A4")
+  - page_orientation: "portrait" | "landscape" (default: "portrait")
+  - scale_factor: float (default: 10.0)
 
-# System health check
 GET /api/health
+  # Returns system status and OpenCASCADE availability
 ```
+
+## Request Models
+
+The `models/request_models.py` defines `BrepPapercraftRequest` with key parameters:
+- `scale_factor`: Default 10.0
+- `max_faces`: Maximum 20 faces to process
+- `tab_width`: 5.0mm for assembly tabs
+- `min_face_area`: 1.0 to filter tiny faces
+- `layout_mode`: "canvas" or "paged"
+- `page_format`: A4, A3, Letter
+- `page_orientation`: portrait or landscape
 
 ## Key Dependencies
 
-- **OpenCASCADE 7.9.0** (`pythonocc-core`) - CAD kernel
+- **OpenCASCADE 7.9.0** (`pythonocc-core`) - Industrial CAD kernel, required for all operations
 - **FastAPI** - Web framework
 - **svgwrite** - SVG generation
-- **scipy/numpy** - Scientific computing
+- **scipy/numpy** - Scientific computing for geometry operations
+- **networkx** - Graph algorithms for face connectivity
+- **shapely** - Polygon intersection detection
 
-## Testing
+## Error Handling
 
-Test scripts available:
-- `test_brep_export.py` - Tests BREP export methods
-- `test_face_numbering.py` - Face numbering functionality
-- `test_polygon_overlap.py` - Polygon intersection detection
+- Failed operations save debug files to `core/debug_files/`
+- OpenCASCADE availability checked at startup
+- Detailed error messages for geometry processing failures
 
-## Debug Mode
+## Layout System
 
-Failed operations save debug files to `core/debug_files/`:
+Two distinct layout modes:
+1. **Canvas mode**: Dynamic canvas that adjusts to content size
+2. **Paged mode**: Fixed page sizes with automatic pagination
+   - Supports A4 (210×297mm), A3 (297×420mm), Letter (216×279mm)
+   - Automatic page breaks and margin handling
+   - Returns ZIP file when multiple pages needed
 
-```bash
-curl -X POST \
-  -F "file=@model.step" \
-  -F "debug_mode=true" \
-  http://localhost:8001/api/step/unfold
-```
+## Face Numbering
 
-## Layout Modes
+- Generated server-side based on normal vectors
+- Dynamically sized according to face area
+- Numbers placed at face centroids
+- Implementation in `core/svg_exporter.py`
 
-Two layout modes for SVG generation:
-1. **Canvas mode** (default): Dynamic canvas size based on content
-2. **Paged mode**: Fixed page sizes (A4, A3, Letter) with automatic pagination
+## Debug Files
 
-## Face Numbering System
-
-Face numbers are generated server-side based on normal vectors and dynamically sized according to face area. Implementation in `core/svg_exporter.py`.
+The system automatically saves debug STEP files in `core/debug_files/` when processing fails. These files use timestamp-based naming: `debug_YYYYMMDD-HHMMSS_<tempfile>.step`
