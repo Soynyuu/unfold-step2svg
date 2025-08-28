@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A 3D-to-2D papercraft generation system that converts STEP CAD files and CityGML urban models into unfolded SVG diagrams. Part of the 2025 Mitou Junior program, using OpenCASCADE Technology for 3D geometry processing.
+A 3D-to-2D papercraft generation system that converts STEP CAD files into unfolded SVG diagrams. Part of the 2025 Mitou Junior program, using OpenCASCADE Technology for 3D geometry processing.
 
 Repository: https://github.com/Soynyuu/unfold-step2svg
 
@@ -20,6 +20,11 @@ python main.py  # Starts on localhost:8001
 
 # Test endpoints
 curl http://localhost:8001/api/health
+
+# Test scripts
+bash test_face_numbers.sh     # Test face numbering feature
+bash test_layout_modes.sh     # Test different layout modes
+python test_brep_export.py    # Test BREP export methods
 ```
 
 ## Architecture
@@ -31,42 +36,34 @@ curl http://localhost:8001/api/health
 4. **Layout** (`core/layout_manager.py`) - Page optimization
 5. **Export** (`core/svg_exporter.py`) - SVG generation with face numbering
 
-**CityGML Dual Pipeline:**
-- **Modern (default)**: CityGML → IFC → STEP (bypasses OCCT writer issues)
-- **Legacy**: CityGML → OCCT Solids → STEP
-
-Pipeline selection in `services/citygml_processor.py` via `use_ifc_pipeline` parameter.
+**Support Modules:**
+- `core/brep_exporter.py` - BREP format export functionality
+- `core/step_exporter.py` - STEP format export functionality
 
 ## API Endpoints
 
 ```bash
-# STEP to SVG
-curl -X POST \
-  -F "file=@model.step" \
-  http://localhost:8001/api/step/unfold \
-  -o papercraft.svg
+# STEP to SVG papercraft
+POST /api/step/unfold
+  Parameters: file, return_face_numbers, output_format, layout_mode, page_format, page_orientation, scale_factor
 
-# CityGML to STEP
-curl -X POST \
-  -F "file=@city.gml" \
-  -F "lod_filter=2" \
-  -F "use_ifc_pipeline=true" \
-  http://localhost:8001/api/citygml/to-step \
-  -o buildings.step
-
-# Validate CityGML
-curl -X POST \
-  -F "file=@city.gml" \
-  http://localhost:8001/api/citygml/validate
+# System health check
+GET /api/health
 ```
 
 ## Key Dependencies
 
-- **OpenCASCADE 7.9.0** - CAD kernel (`pythonocc-core`)
-- **ifcopenshell 0.8.0** - IFC processing for CityGML pipeline
+- **OpenCASCADE 7.9.0** (`pythonocc-core`) - CAD kernel
 - **FastAPI** - Web framework
-- **lxml** - CityGML XML parsing
 - **svgwrite** - SVG generation
+- **scipy/numpy** - Scientific computing
+
+## Testing
+
+Test scripts available:
+- `test_brep_export.py` - Tests BREP export methods
+- `test_face_numbering.py` - Face numbering functionality
+- `test_polygon_overlap.py` - Polygon intersection detection
 
 ## Debug Mode
 
@@ -79,14 +76,11 @@ curl -X POST \
   http://localhost:8001/api/step/unfold
 ```
 
-## Known Issues
+## Layout Modes
 
-- **OCCT STEP Writer**: Path encoding issues - use IFC pipeline (`use_ifc_pipeline=true`)
-- **BRepGProp imports**: Version-dependent, handled with fallbacks in `core/citygml_solidifier.py`
-
-## Testing
-
-No testing framework established. Implement with pytest when needed.
+Two layout modes for SVG generation:
+1. **Canvas mode** (default): Dynamic canvas size based on content
+2. **Paged mode**: Fixed page sizes (A4, A3, Letter) with automatic pagination
 
 ## Face Numbering System
 
