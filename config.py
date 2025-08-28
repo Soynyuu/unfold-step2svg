@@ -23,12 +23,6 @@ try:
 except ImportError as e:
     OCCT_AVAILABLE = False
 
-# lxml (CityGML処理用) の可用性チェック
-try:
-    from lxml import etree
-    LXML_AVAILABLE = True
-except ImportError:
-    LXML_AVAILABLE = False
 
 # 環境変数の読み込み
 try:
@@ -44,23 +38,14 @@ CORS_ALLOW_ALL = os.getenv("CORS_ALLOW_ALL", "false").lower() == "true"
 # アプリケーション設定
 APP_CONFIG = {
     "title": "unfold-step2svg",
-    "description": "STEPソリッドモデル（.step/.stp）を高精度展開図（SVG）に変換し、CityGMLからSTEPファイルへの変換も可能なAPI。",
-    "version": "2.1.0",  # CityGML対応でバージョンアップ
+    "description": "STEPソリッドモデル（.step/.stp）を高精度展開図（SVG）に変換するAPI。",
+    "version": "1.0.0"
     "contact": {
         "name": "Kodai MIYAZAKI",
-        "description": "商用グレードSTEP-to-SVG変換およびCityGML-to-STEP変換技術の専門チーム"
+        "description": "商用グレードSTEP-to-SVG変換技術の専門チーム"
     }
 }
 
-# CityGML処理設定
-CITYGML_CONFIG = {
-    "enabled": OCCT_AVAILABLE and LXML_AVAILABLE,
-    "supported_formats": ["gml", "xml", "citygml"] if LXML_AVAILABLE else [],
-    "max_file_size_mb": 100,  # Maximum CityGML file size in MB
-    "default_tolerance": 1e-6,
-    "default_lod": 2,
-    "max_buildings_per_request": 1000
-}
 
 def setup_cors(app: FastAPI) -> None:
     """CORS設定を行う"""
