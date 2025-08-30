@@ -111,7 +111,7 @@ async def unfold_step_to_svg(
         raise HTTPException(status_code=500, detail=f"予期しないエラー: {str(e)}")
 
 # --- ヘルスチェック ---
-@router.get("/api/health")
+@router.get("/api/health", status_code=200)
 async def api_health_check():
     return {
         "status": "healthy" if OCCT_AVAILABLE else "degraded",
