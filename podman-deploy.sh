@@ -65,8 +65,8 @@ case $ACTION in
         $0 run
         ;;
     
-    stop)
         echo -e "${YELLOW}Stopping container...${NC}"
+    stop)
         podman stop ${CONTAINER_NAME}
         echo -e "${GREEN}Container stopped${NC}"
         ;;

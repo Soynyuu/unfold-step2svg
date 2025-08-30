@@ -1,6 +1,6 @@
 # unfold-step2svg API Reference
 
-STEPソリッドモデル（.step/.stp）を高精度展開図（SVG）に変換するAPI
+STEP ソリッドモデル（.step/.stp）を高精度な展開図（SVG）へ変換する FastAPI。
 
 ## Base URL
 
@@ -8,158 +8,160 @@ STEPソリッドモデル（.step/.stp）を高精度展開図（SVG）に変換
 http://localhost:8001
 ```
 
+## OpenAPI Docs
+
+- Swagger UI: `GET /docs`
+- ReDoc: `GET /redoc`
+
 ## Authentication
 
-このAPIは認証不要です。
+不要（現状パブリック）。
+
+## Conventions
+
+- リクエストは `multipart/form-data`（ファイルアップロード）
+- 成功時は `image/svg+xml`（SVGファイル）または `application/json`（JSON）
+- エラー時は `application/json`（`detail` を含む）
+
+---
 
 ## Endpoints
 
-### 1. STEP展開API
+### 1) POST /api/step/unfold — STEP→SVG/JSON 変換
 
-STEPファイルを受け取り、展開図（SVG）を生成します。
+STEP ファイルを受け取り、展開図（SVG）を生成します。
 
+Request
+
+- Content-Type: `multipart/form-data`
+- Parameters
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `file` | File | Yes | — | STEP ファイル（.step/.stp） |
+| `output_format` | string | No | `svg` | `svg`=SVGを返却、`json`=JSONで返却 |
+| `return_face_numbers` | boolean | No | `true` | 面番号を JSON レスポンスに含めるか |
+| `layout_mode` | string | No | `canvas` | `canvas` または `paged` |
+| `page_format` | string | No | `A4` | `A4`, `A3`, `Letter`（`paged`時に有効） |
+| `page_orientation` | string | No | `portrait` | `portrait` or `landscape`（`paged`時に有効） |
+| `scale_factor` | number | No | `10.0` | 図の縮尺倍率（例: 150=1/150） |
+
+Response — SVG
+
+- Status: `200 OK`
+- Content-Type: `image/svg+xml`
+- Headers:
+  - `X-Layout-Mode`: `canvas` or `paged`
+  - `X-Page-Format`: `A4`/`A3`/`Letter`（`paged`時）
+  - `X-Page-Orientation`: `portrait`/`landscape`（`paged`時）
+  - `X-Page-Count`: `1+`（`paged`時）
+
+Response — JSON（`output_format=json`）
+
+```json
+{
+  "svg_content": "<svg ...>...</svg>",
+  "stats": {
+    "page_count": 1,
+    "layout_mode": "canvas"
+  },
+  "face_numbers": [
+    { "id": 1, "x": 123.4, "y": 56.7 },
+    { "id": 2, "x": 223.4, "y": 86.7 }
+  ]
+}
 ```
-POST /api/step/unfold
-```
 
-#### Request
+Errors
 
-**Content-Type**: `multipart/form-data`
+| Status | detail |
+|--------|--------|
+| 400 | `STEPファイル（.step/.stp）のみ対応です。` |
+| 400 | `STEPファイルの読み込みに失敗しました。` |
+| 500 | `予期しないエラー: ...` |
+| 503 | `OpenCASCADE Technology が利用できません。STEPファイル処理に必要です。` |
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `file` | File | Yes | STEPファイル（.step/.stp） |
+Examples
 
-#### Response
-
-**Success (200)**
-- **Content-Type**: `image/svg+xml`
-- **Body**: SVGファイル
-
-**Error Responses**
-
-| Status Code | Description |
-|-------------|-------------|
-| 400 | 不正なファイル形式またはファイル読み込みエラー |
-| 500 | サーバー内部エラー |
-| 503 | OpenCASCADE Technology が利用できない |
-
-#### Example
+— SVG を保存
 
 ```bash
 curl -X POST \
-  http://localhost:8001/api/step/unfold \
-  -H "Content-Type: multipart/form-data" \
   -F "file=@example.step" \
+  "http://localhost:8001/api/step/unfold" \
   -o output.svg
 ```
 
-### 2. ヘルスチェック
+— JSON で取得（面番号込み）
 
-APIの状態を確認します。
-
+```bash
+curl -X POST \
+  -F "file=@example.step" \
+  -F "output_format=json" \
+  -F "return_face_numbers=true" \
+  "http://localhost:8001/api/step/unfold" | jq .
 ```
-GET /api/health
+
+— ページレイアウト（A3 横）で SVG
+
+```bash
+curl -X POST \
+  -F "file=@example.step" \
+  -F "layout_mode=paged" \
+  -F "page_format=A3" \
+  -F "page_orientation=landscape" \
+  "http://localhost:8001/api/step/unfold" -o paged.svg
 ```
 
-#### Response
+---
 
-**Success (200)**
+### 2) GET /api/health — ヘルスチェック
+
+サービス状態と機能を返します。
+
+Response
 
 ```json
 {
   "status": "healthy",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "opencascade_available": true,
-  "supported_formats": ["step"]
+  "supported_formats": ["step", "stp", "brep"],
+  "features": {
+    "step_to_svg_unfold": true,
+    "face_numbering": true,
+    "multi_page_layout": true,
+    "canvas_layout": true,
+    "paged_layout": true
+  }
 }
 ```
 
-#### Response Fields
+---
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `status` | string | APIの状態 (`healthy` または `degraded`) |
-| `version` | string | APIのバージョン |
-| `opencascade_available` | boolean | OpenCASCADE Technologyの利用可否 |
-| `supported_formats` | array | サポートされているファイル形式 |
+## Request Models（参考）
 
-## Request Models
-
-### BrepPapercraftRequest
-
-STEP展開処理のパラメータ（現在は内部的にデフォルト値を使用）
+一部の値は内部デフォルトとして `BrepPapercraftRequest` にまとめられます。
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `scale_factor` | float | 10.0 | スケールファクター |
-| `units` | string | "mm" | 単位 |
-| `max_faces` | integer | 20 | 最大面数 |
-| `curvature_tolerance` | float | 0.1 | 曲率許容値 |
-| `tab_width` | float | 5.0 | タブ幅 |
-| `min_face_area` | float | 1.0 | 最小面積 |
-| `unfold_method` | string | "planar" | 展開アルゴリズム |
-| `show_scale` | boolean | true | スケール表示 |
-| `show_fold_lines` | boolean | true | 折り線表示 |
-| `show_cut_lines` | boolean | true | 切り線表示 |
-
-## Error Codes
-
-| Code | Message | Description |
-|------|---------|-------------|
-| 400 | "STEPファイル（.step/.stp）のみ対応です。" | 対応していないファイル形式 |
-| 400 | "STEPファイルの読み込みに失敗しました。" | ファイル解析エラー |
-| 503 | "OpenCASCADE Technology が利用できません。STEPファイル処理に必要です。" | 依存関係エラー |
-
-## Examples
-
-### JavaScript (Fetch API)
-
-```javascript
-const uploadFile = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  
-  const response = await fetch('http://localhost:8001/api/step/unfold', {
-    method: 'POST',
-    body: formData
-  });
-  
-  if (response.ok) {
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    return url;
-  } else {
-    throw new Error('Upload failed');
-  }
-};
-```
-
-### Python (requests)
-
-```python
-import requests
-
-def upload_step_file(file_path):
-    with open(file_path, 'rb') as f:
-        files = {'file': f}
-        response = requests.post(
-            'http://localhost:8001/api/step/unfold',
-            files=files
-        )
-    
-    if response.status_code == 200:
-        with open('output.svg', 'wb') as out:
-            out.write(response.content)
-        return 'output.svg'
-    else:
-        raise Exception(f'Error: {response.status_code}')
-```
+| `units` | string | "mm" | 単位（将来拡張） |
+| `max_faces` | integer | 20 | 最大面数（将来拡張） |
+| `curvature_tolerance` | float | 0.1 | 曲率許容値（将来拡張） |
+| `tab_width` | float | 5.0 | タブ幅（将来拡張） |
+| `min_face_area` | float | 1.0 | 最小面積（将来拡張） |
+| `unfold_method` | string | "planar" | 展開アルゴリズム（将来拡張） |
+| `show_scale` | boolean | true | スケール表示（将来拡張） |
+| `show_fold_lines` | boolean | true | 折り線表示（将来拡張） |
+| `show_cut_lines` | boolean | true | 切り線表示（将来拡張） |
 
 ## Notes
 
-- 現在サポートされているファイル形式：STEP（.step/.stp）のみ
-- 出力形式：SVG
-- OpenCASCADE Technologyが必要
-- 一時ファイルは自動的に管理されます
-- 大きなファイルの処理には時間がかかる場合があります
+- サポート形式: `.step`/`.stp`
+- 出力: SVG（ファイル）/ JSON（文字列）
+- OCCT が未導入の場合は 503 を返すか、一部機能が制限されます
+- 一時ファイルはサーバ側で管理されます
+
+— Made with ❤️ by the unfold-step2svg team
+
