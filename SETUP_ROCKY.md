@@ -1,42 +1,4 @@
-# Rocky Linux セットアップガイド
-
-## 前提条件
-
-- Rocky Linux 8.x または 9.x
-- Podman (コンテナランタイム)
-- Git
-- 最低4GBのRAM（推奨8GB以上）
-- インターネット接続
-
-## ⚠️ Condaビルドが遅い問題の解決策
-
-### 推奨: Mambaを使用した高速ビルド
-
-```bash
-# Mamba版Dockerfileでビルド（Condaの10倍以上高速）
-podman build -f Dockerfile.mamba -t unfold-step2svg .
-```
-
-### 代替案1: 最小構成でビルド
-
-```bash
-# 最小限の依存関係でビルド
-podman build -f Dockerfile.minimal -t unfold-step2svg .
-```
-
-### 代替案2: ローカルでMambaを使用
-
-```bash
-# Mambaforge インストール
-curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-Linux-x86_64.sh -o mambaforge.sh
-bash mambaforge.sh -b -p $HOME/mambaforge
-export PATH="$HOME/mambaforge/bin:$PATH"
-
-# 環境作成（高速）
-mamba env create -f environment-minimal.yml
-mamba activate unfold-step2svg
-python main.py
-```
+# How to setup Podman container
 
 ## セットアップ手順
 
@@ -209,25 +171,6 @@ podman run -d \
   --network host \
   unfold-step2svg
 ```
-
-### パッケージインストールエラー
-
-**Condaの環境解決が遅い（"Solving environment"で止まる）場合：**
-
-```bash
-# 1. Mamba版を使用（最速）
-podman build -f Dockerfile.mamba -t unfold-step2svg .
-
-# 2. メモリを増やす
-podman build --memory=8g -f Dockerfile -t unfold-step2svg .
-
-# 3. スワップを追加
-sudo dd if=/dev/zero of=/swapfile bs=1G count=8
-sudo chmod 600 /swapfile
-sudo mkswap /swapfile
-sudo swapon /swapfile
-```
-
 ## コンテナの管理
 
 ```bash
@@ -300,5 +243,3 @@ podman run -d \
 3. Podmanのバージョンアップグレード検討
 
 ---
-
-最終更新: 2025年1月

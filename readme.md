@@ -1,295 +1,154 @@
 # unfold-step2svg
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/python-3.10.18-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-teal.svg)](https://fastapi.tiangolo.com/)
 [![OpenCASCADE](https://img.shields.io/badge/OpenCASCADE-7.9.0-green.svg)](https://www.opencascade.com/)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED.svg)](https://www.docker.com/)
 [![Mitou Junior](https://img.shields.io/badge/未踏ジュニア-2025-orange.svg)](https://jr.mitou.org/)
 
-3D STEPファイルから展開図SVGを生成するペーパークラフト変換システム
+> 3D STEP を高精度な 2D ペーパークラフト SVG に。シンプルな API、実用的なレイアウト、印刷まで一気通貫。
 
-## 🎯 概要
+English: A tiny FastAPI service that unfolds STEP into print‑ready SVG papercraft. Powered by OpenCASCADE.
 
-**unfold-step2svg**は、3D CADモデル（STEP形式）を2Dペーパークラフトパターン（SVG形式）に変換するWebサービスです。OpenCASCADE Technologyを使用して3Dジオメトリを解析し、紙工作用の印刷可能な展開図を生成します。
+## 特長
 
-**2025年度 一般社団法人未踏 未踏ジュニアプロジェクト成果物**
+- 📐 STEP→SVG: 3D（.step/.stp）から2D展開図を自動生成
+- 🧩 折/切/タブ: 折り線・切り線・組み立てタブを描画
+- 🖨️ レイアウト: `canvas`/`paged`（A4/A3/Letter、縦横）
+- 🔢 面番号: 面番号データの返却に対応（オプション）
+- 🔄 スケール: `scale_factor` で簡単スケーリング
+- 🧰 API/CLI 友好: SVGまたはJSONで取得しワークフローに組み込みやすい
 
-### English
-*A web service that converts 3D CAD models (STEP format) into 2D papercraft patterns (SVG format). Built with OpenCASCADE Technology for analyzing 3D geometry and generating print-ready unfold diagrams.*
+## クイックスタート
 
-## ✨ 機能
-
-- 📐 **3Dから2Dへの変換** - 3D STEPモデルを自動的に2Dパターンに展開
-- 🏢 **CityGMLサポート** - 都市3Dモデル（CityGML/Plateau）をSTEP形式に変換
-- 📄 **マルチページレイアウト** - A4、A3、レター形式に最適化されたレイアウト
-- 🎨 **印刷対応SVG** - 折り線、切り取り線、組み立てタブ付きのSVG生成
-- 🔧 **産業用CADカーネル** - OpenCASCADE Technology 7.9.0を搭載
-- 🚀 **高速APIサービス** - 包括的なエラーハンドリングを備えたRESTful API
-
-## 🏗️ アーキテクチャ
-
-```
-┌─────────────────┐     ┌─────────────────┐
-│   STEPファイル   │     │  CityGMLファイル │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│  ファイルローダー  │     │ CityGMLパーサー  │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│ ジオメトリ解析   │     │  IFCコンバーター │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│  展開エンジン    │     │ STEPエクスポーター│
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         ▼                       │
-┌─────────────────┐              │
-│ レイアウト管理   │              │
-└────────┬────────┘              │
-         │                       │
-         ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│  SVGエクスポーター│     │   STEPファイル   │
-└────────┬────────┘     └─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│   SVG出力       │
-└─────────────────┘
-```
-
-## 🚀 クイックスタート
-
-### 前提条件
-
-- Conda (Anaconda または Miniconda)
-- Git
-- Python 3.10.18
-
-### インストール
+前提: Conda もしくは Python 3.10 が利用可能
 
 ```bash
-# リポジトリをクローン
+# 1) Clone
 git clone https://github.com/soynyuu/unfold-step2svg
 cd unfold-step2svg
 
-# Conda環境を作成・有効化
-conda env create -f environment.yml
-conda activate unfold-step2svg
+# 2) Create env (Conda 推奨)
+conda env create -f environment.yml && conda activate unfold-step2svg
 
-# サーバーを起動
-python main.py
-```
+# 3) Run API (dev)
+python main.py  # http://localhost:8001
 
-サーバーは `http://localhost:8001` で起動します
-
-### ヘルスチェック
-
-```bash
+# 4) Health check
 curl http://localhost:8001/api/health
 ```
 
-## 📚 API ドキュメント
+STEP を送って SVG を受け取る（cURL）
 
-### 主要エンドポイント
-
-#### 1. STEP→SVG変換
-
-```bash
-POST /api/step/unfold
-```
-
-STEPファイルをペーパークラフトSVGパターンに変換します。
-
-**リクエスト:**
-- フォームデータ: `file` (STEPファイル, .step または .stp)
-
-**レスポンス:**
-- 成功: SVGファイル (image/svg+xml)
-- エラー: JSONエラーメッセージ
-
-**例:**
 ```bash
 curl -X POST \
-  -F "file=@your_model.step" \
-  http://localhost:8001/api/step/unfold \
-  -o papercraft.svg
+  -F "file=@example.step" \
+  "http://localhost:8001/api/step/unfold" \
+  -o output.svg
 ```
 
-#### 2. CityGML→STEP変換
+JSON で受け取る（SVG文字列や面番号を含めたい場合）
 
-```bash
-POST /api/citygml/to-step
-```
-
-CityGML都市モデルをSTEP形式に変換します。
-
-**リクエスト:**
-- フォームデータ: `file` (CityGMLファイル)
-- オプション: `lod_filter`, `min_building_area`, `max_buildings`, `use_ifc_pipeline`
-
-**レスポンス:**
-- 成功: STEPファイルまたはZIP（複数建物の場合）
-- エラー: JSONエラーメッセージ
-
-**例:**
 ```bash
 curl -X POST \
-  -F "file=@city_model.gml" \
-  -F "lod_filter=2" \
-  -F "max_buildings=10" \
-  http://localhost:8001/api/citygml/to-step \
-  -o buildings.step
+  -F "file=@example.step" \
+  -F "output_format=json" \
+  -F "return_face_numbers=true" \
+  "http://localhost:8001/api/step/unfold" | jq .stats
 ```
 
-#### 3. CityGML検証
+## Docker/Podman
 
 ```bash
-POST /api/citygml/validate
+# Build & run (Docker)
+docker build -t unfold-step2svg .
+docker compose up -d
+curl http://localhost:8001/api/health
+
+# Podman helper
+bash podman-deploy.sh build-run
 ```
 
-CityGMLファイルを検証し、建物統計を取得します。
-
-**例:**
-```bash
-curl -X POST \
-  -F "file=@city_model.gml" \
-  http://localhost:8001/api/citygml/validate
-```
-
-#### 4. システム状態
-
-```bash
-GET /api/health
-```
-
-システムステータスと機能を確認します。
-
-**レスポンス:**
-```json
-{
-  "status": "healthy",
-  "version": "1.0.0",
-  "opencascade_available": true,
-  "citygml_support": true,
-  "supported_formats": ["step", "stp", "citygml", "gml"]
-}
-```
-
-## 🛠️ 開発
-
-### プロジェクト構造
+## プロジェクト構成
 
 ```
-unfold-step2svg/
-├── api/                    # APIエンドポイント
-│   └── endpoints.py        # FastAPIルート
-├── core/                   # コア処理モジュール
-│   ├── file_loaders.py     # STEP/BREPファイル読み込み
-│   ├── geometry_analyzer.py # 3Dジオメトリ解析
-│   ├── unfold_engine.py    # 3Dから2Dへの展開
-│   ├── layout_manager.py   # ページレイアウト最適化
-│   ├── svg_exporter.py     # SVG生成
-│   ├── citygml_parser.py   # CityGML XMLパース
-│   ├── citygml_to_ifc_converter.py # CityGMLからIFCへ
-│   └── ifc_to_step_converter.py    # IFCからSTEPへ
-├── models/                 # データモデル
-│   └── request_models.py   # Pydanticモデル
-├── services/               # ビジネスロジック
-│   └── citygml_processor.py # CityGML処理
-├── config.py               # 設定
-├── main.py                 # アプリケーションエントリーポイント
-└── environment.yml         # Conda環境
+core/            # 展開パイプライン（I/O・解析・展開・レイアウト・エクスポート）
+  file_loaders.py
+  geometry_analyzer.py
+  unfold_engine.py
+  layout_manager.py
+  svg_exporter.py
+  step_exporter.py
+api/             # FastAPI ルーター/設定
+  endpoints.py
+  config.py
+services/        # STEP 処理ヘルパ
+  step_processor.py
+models/, utils/  # 共有型/ユーティリティ
+tests & examples # test_*.py, test_*.sh, sample outputs
 ```
 
-### 使用技術
+## 設定（環境変数）
 
-- **OpenCASCADE Technology 7.9.0** - 産業グレードのCADカーネル
-- **pythonocc-core 7.9.0** - OpenCASCADEのPythonバインディング
-- **FastAPI** - モダンなWebフレームワーク
-- **ifcopenshell 0.8.0** - IFC/BIMファイル処理
-- **lxml 5.3.0** - CityGML用のXMLパース
-- **svgwrite** - SVG生成
-- **scipy/numpy** - 科学計算
+- `PORT`: API のポート（デフォルト: 8001）
+- `FRONTEND_URL`: CORS 許可オリジン（例: `http://localhost:3001`）
+- `CORS_ALLOW_ALL`: すべて許可（`true`/`false`、開発向け）
 
-### デバッグモード
+`.env.development` / `.env.production` を用意すると自動で読み込まれます。
 
-処理に失敗した場合、トラブルシューティング用のデバッグファイルが自動的に `core/debug_files/` に保存されます。
+## API ドキュメント
+
+- OpenAPI UI: `http://localhost:8001/docs`（Swagger UI）/ `http://localhost:8001/redoc`
+- 詳細は `API_REFERENCE.md` を参照
+
+主要エンドポイント（抜粋）
+
+- `POST /api/step/unfold` STEP→SVG/JSON 変換
+  - フォーム: `file` (必須), `layout_mode`, `page_format`, `page_orientation`, `scale_factor`, `output_format`, `return_face_numbers`
+- `GET /api/health` ヘルスチェック
+
+## 開発
+
+スタイル: Python 3.10 / PEP 8, 4-space indent, type hints。I/O は `file_loaders`、ジオメトリは `geometry_analyzer`、レイアウトは `layout_manager`、エクスポートは `svg_exporter` / `step_exporter` に分離。
 
 ```bash
-# 詳細ログのためのデバッグモード有効化
-curl -X POST \
-  -F "file=@model.step" \
-  -F "debug_mode=true" \
-  http://localhost:8001/api/step/unfold
+# Run (dev)
+python main.py
+
+# Tests / Examples
+python test_polygon_overlap.py
+bash test_layout_modes.sh
+python test_brep_export.py
 ```
 
-## 📝 使用例
+OpenCASCADE (OCCT) が未インストールでも API は起動します（機能は制限されます）。
 
-### 基本的な展開図生成
+## よくある質問
 
-```python
-import requests
+- サポート拡張子は？ → `.step`/`.stp`
+- 出力は？ → SVG（ファイル返却）/ JSON（文字列返却）
+- レイアウトは？ → `canvas`（単一キャンバス）/ `paged`（A4/A3/Letter、縦横）
 
-# STEPファイルをアップロードして変換
-with open('model.step', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8001/api/step/unfold',
-        files={'file': f}
-    )
+## ロードマップ
 
-# SVG出力を保存
-with open('papercraft.svg', 'wb') as f:
-    f.write(response.content)
-```
+- Nesting 最適化（面配置の自動最密化）
+- タブ生成の詳細制御（角丸/実寸幅）
+- 大規模モデル向けの分割/ストリーミング
+- 追加フォーマット入出力（BRepなど）
 
-### CityGML処理
+## 貢献方法
 
-```python
-import requests
+Issue/PR 歓迎です。変更点・背景・再現手順（必要なら SVG のスクショ）を添えてください。コミットは「fix: ...」「feat: ...」のように短く明確に。
 
-# フィルタリング付きでCityGMLをSTEPに変換
-with open('tokyo_plateau.gml', 'rb') as f:
-    response = requests.post(
-        'http://localhost:8001/api/citygml/to-step',
-        files={'file': f},
-        data={
-            'lod_filter': 2,
-            'min_building_area': 100,
-            'max_buildings': 50,
-            'export_individual': True
-        }
-    )
+## ライセンス
 
-# STEPファイルを保存
-with open('buildings.zip', 'wb') as f:
-    f.write(response.content)
-```
+MIT License
 
-## 🤝 貢献
+## 謝辞
 
-貢献を歓迎します！イシューやプルリクエストをお気軽にお送りください。
+- OpenCASCADE Technology
+- 一般社団法人未踏 未踏ジュニア（2025）
 
-## 📄 ライセンス
+— Made with ❤️ by the unfold-step2svg team
 
-このプロジェクトはMITライセンスの下でライセンスされています - 詳細は[LICENSE](LICENSE)ファイルをご覧ください。
-
-## 🙏 謝辞
-
-- **未踏ジュニア 2025** - プロジェクトのサポート
-- **OpenCASCADE Technology** - 強力なCADカーネル
-- **pythonocc コミュニティ** - Pythonバインディングとサポート
-
-## 📧 連絡先
-
-- **GitHub:** [https://github.com/soynyuu/unfold-step2svg](https://github.com/soynyuu/unfold-step2svg)
-- **Issues:** [バグ報告や機能リクエスト](https://github.com/soynyuu/unfold-step2svg/issues)
-
----
-
-Made with ❤️ for the Mitou Junior 2025 Program
